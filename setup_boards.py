@@ -41,6 +41,7 @@ BOARD_COLUMNS: dict[str, list[str]] = {
         "Has Autofix",
         "Component",
         "Code URL",
+        "Semgrep URL",
         "Sourcing Policy",
         "External Ticket",
         "Rule Explanation",
@@ -68,6 +69,7 @@ BOARD_COLUMNS: dict[str, list[str]] = {
         "Message",
         "Categories",
         "Code URL",
+        "Semgrep URL",
     ],
     "Secrets": [
         "Finding ID",
@@ -81,6 +83,7 @@ BOARD_COLUMNS: dict[str, list[str]] = {
         "Categories",
         "Message",
         "Code URL",
+        "Semgrep URL",
         "External Ticket",
     ],
 }

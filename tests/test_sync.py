@@ -21,16 +21,18 @@ TODAY = str(date.today())
 SAST_COL_MAP = {
     "Finding ID": "text_fid", "Severity": "text_sev", "Rule": "text_rule",
     "File": "text_file", "Repo": "text_repo", "AI Verdict": "text_aiv",
-    "CWE": "text_cwe",
+    "CWE": "text_cwe", "Semgrep URL": "text_semgrep_url",
 }
 SCA_COL_MAP = {
     "Finding ID": "text_fid", "Severity": "text_sev", "Rule": "text_rule",
     "File": "text_file", "Repo": "text_repo", "CVE": "text_cve",
     "Reachability": "text_reach", "Package": "text_pkg",
+    "Semgrep URL": "text_semgrep_url",
 }
 SECRETS_COL_MAP = {
     "Finding ID": "text_fid", "Severity": "text_sev", "Rule": "text_rule",
     "File": "text_file", "Repo": "text_repo", "Validation State": "text_val",
+    "Semgrep URL": "text_semgrep_url",
 }
 
 SAST_FINDING = Finding(
@@ -91,6 +93,7 @@ def _mock_clients(sast=None, sca=None, secrets=None):
         m = MagicMock()
         m.get_column_map.return_value = col_map
         m.create_item.return_value = (f"m-{board_type}", 0)
+        m.create_update.return_value = f"u-{board_type}"
         monday_mocks[board_type] = m
 
     return semgrep, monday_mocks
@@ -246,3 +249,45 @@ def test_missing_env_var_exits_early(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as exc_info:
         sync.load_config()
     assert exc_info.value.code == 1
+
+
+# ---------------------------------------------------------------------------
+# create_update and Semgrep URL
+# ---------------------------------------------------------------------------
+
+def test_create_update_called_after_new_item(env_vars, state_file):
+    semgrep, mondays = _mock_clients(sast=[SAST_FINDING])
+    p1, p2 = _patch_clients(semgrep, mondays)
+    with p1, p2:
+        sync.run(state_path=state_file)
+
+    mondays["SAST"].create_update.assert_called_once()
+    item_id_arg, body_arg = mondays["SAST"].create_update.call_args[0]
+    assert item_id_arg == "m-SAST"
+    assert "<b>AI Verdict:</b>" in body_arg
+
+
+def test_create_update_failure_does_not_remove_from_state(env_vars, state_file):
+    semgrep, mondays = _mock_clients(sast=[SAST_FINDING])
+    mondays["SAST"].create_update.side_effect = MondayAPIError("update failed")
+    p1, p2 = _patch_clients(semgrep, mondays)
+    with p1, p2:
+        sync.run(state_path=state_file)
+
+    # create_update failure must not prevent the finding from being saved to state
+    state = json.loads(state_file.read_text())
+    assert "1001" in state["synced"]
+    assert state["synced"]["1001"]["monday_item_id"] == "m-SAST"
+
+
+def test_semgrep_url_injected_into_column_values(env_vars, state_file):
+    semgrep, mondays = _mock_clients(sast=[SAST_FINDING])
+    p1, p2 = _patch_clients(semgrep, mondays)
+    with p1, p2:
+        sync.run(state_path=state_file)
+
+    _, col_vals = mondays["SAST"].create_item.call_args[0]
+    assert col_vals.get("text_semgrep_url", "").startswith(
+        "https://semgrep.dev/orgs/acme/findings/"
+    )
+    assert "1001" in col_vals["text_semgrep_url"]

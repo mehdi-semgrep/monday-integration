@@ -30,19 +30,23 @@ def _columns_resp(titles):
 
 SAST_COLUMNS_RESP = _columns_resp([
     "Finding ID", "Severity", "Confidence", "Rule", "File", "Repo",
-    "AI Verdict", "CWE", "Message",
+    "AI Verdict", "CWE", "Message", "Semgrep URL",
 ])
 SCA_COLUMNS_RESP = _columns_resp([
     "Finding ID", "Severity", "Rule", "File", "Repo",
-    "CVE", "Reachability", "Package", "Version",
+    "CVE", "Reachability", "Package", "Version", "Semgrep URL",
 ])
 SECRETS_COLUMNS_RESP = _columns_resp([
-    "Finding ID", "Severity", "Rule", "File", "Repo", "Validation State",
+    "Finding ID", "Severity", "Rule", "File", "Repo", "Validation State", "Semgrep URL",
 ])
 
 
 def _create_item_resp(item_id):
     return {"data": {"create_item": {"id": item_id}}}
+
+
+def _create_update_resp():
+    return {"data": {"create_update": {"id": "u1"}}}
 
 
 def _sast_finding(fid, severity="HIGH"):
@@ -120,23 +124,26 @@ def _add_monday_responses(httpx_mock, n_sast=0, n_sca=0, n_secrets=0):
         counter[0] += 1
         return f"m{counter[0]}"
 
-    # SAST board: column query then creates
+    # SAST board: column query then interleaved create_item + create_update per finding
     if n_sast > 0:
         httpx_mock.add_response(url=MONDAY_URL, json=SAST_COLUMNS_RESP)
         for _ in range(n_sast):
             httpx_mock.add_response(url=MONDAY_URL, json=_create_item_resp(next_id()))
+            httpx_mock.add_response(url=MONDAY_URL, json=_create_update_resp())
 
-    # SCA board: column query then creates
+    # SCA board: column query then interleaved create_item + create_update per finding
     if n_sca > 0:
         httpx_mock.add_response(url=MONDAY_URL, json=SCA_COLUMNS_RESP)
         for _ in range(n_sca):
             httpx_mock.add_response(url=MONDAY_URL, json=_create_item_resp(next_id()))
+            httpx_mock.add_response(url=MONDAY_URL, json=_create_update_resp())
 
-    # Secrets board: column query then creates
+    # Secrets board: column query then interleaved create_item + create_update per finding
     if n_secrets > 0:
         httpx_mock.add_response(url=MONDAY_URL, json=SECRETS_COLUMNS_RESP)
         for _ in range(n_secrets):
             httpx_mock.add_response(url=MONDAY_URL, json=_create_item_resp(next_id()))
+            httpx_mock.add_response(url=MONDAY_URL, json=_create_update_resp())
 
 
 # ---------------------------------------------------------------------------

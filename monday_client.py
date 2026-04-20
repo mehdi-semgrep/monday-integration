@@ -85,6 +85,26 @@ class MondayClient:
         self._column_map = {col["title"]: col["id"] for col in columns}
         return self._column_map
 
+    def create_update(self, item_id: str, body: str) -> str:
+        """Post a text update (comment) to an item's Updates panel.
+
+        Args:
+            item_id: The Monday.com item ID returned by create_item.
+            body:    Plain text or HTML string shown in the Updates section.
+
+        Returns:
+            The Monday.com update ID.
+        """
+        mutation = """
+        mutation ($itemId: ID!, $body: String!) {
+          create_update(item_id: $itemId, body: $body) {
+            id
+          }
+        }
+        """
+        data = self._post(mutation, {"itemId": item_id, "body": body})
+        return data["data"]["create_update"]["id"]
+
     def create_item(self, name: str, column_values: dict) -> tuple[str, int]:
         """Create a board item.
 

@@ -60,6 +60,21 @@ def _set_col(col_vals: dict, col_map: dict[str, str], title: str, value: str) ->
         col_vals[col_map[title]] = value
 
 
+def _fmt_field(label: str, value: str) -> str | None:
+    """Return an HTML-formatted '<b>Label:</b> value' line, or None if value is empty."""
+    return f"<b>{label}:</b> {value}" if value else None
+
+
+def _semgrep_finding_url(slug: str, finding: Finding) -> str:
+    """Construct the Semgrep Cloud UI deep-link URL for a finding."""
+    if not slug:
+        return ""
+    base = f"https://semgrep.dev/orgs/{slug}"
+    if finding.finding_type == "Secrets":
+        return f"{base}/secrets/{finding.id}"
+    return f"{base}/findings/{finding.id}"
+
+
 # ---------------------------------------------------------------------------
 # State helpers
 # ---------------------------------------------------------------------------
@@ -154,6 +169,7 @@ def sast_finding_to_item(finding: Finding, col_map: dict[str, str]) -> tuple[str
     _set_col(cv, col_map, "Sourcing Policy", _safe_get(raw, "sourcing_policy", "name"))
     _set_col(cv, col_map, "External Ticket", _safe_get(raw, "external_ticket"))
     _set_col(cv, col_map, "Rule Explanation", _truncate(_safe_get(assistant, "rule_explanation", "summary")))
+    # Semgrep URL is injected by run() which has access to the deployment slug
 
     return item_name, cv
 
@@ -193,6 +209,7 @@ def sca_finding_to_item(finding: Finding, col_map: dict[str, str]) -> tuple[str,
     _set_col(cv, col_map, "Message", _truncate(_safe_get(raw, "rule_message")))
     _set_col(cv, col_map, "Categories", _join_list(raw.get("categories")))
     _set_col(cv, col_map, "Code URL", _safe_get(raw, "line_of_code_url"))
+    # Semgrep URL is injected by run() which has access to the deployment slug
 
     return item_name, cv
 
@@ -219,8 +236,84 @@ def secrets_finding_to_item(finding: Finding, col_map: dict[str, str]) -> tuple[
     _set_col(cv, col_map, "Message", _truncate(_safe_get(raw, "rule_message")))
     _set_col(cv, col_map, "Code URL", _safe_get(raw, "line_of_code_url"))
     _set_col(cv, col_map, "External Ticket", _safe_get(raw, "external_ticket"))
+    # Semgrep URL is injected by run() which has access to the deployment slug
 
     return item_name, cv
+
+
+# ---------------------------------------------------------------------------
+# Update body formatters (posted to Monday.com Updates feed after item creation)
+# ---------------------------------------------------------------------------
+
+def format_update_body_sast(finding: Finding) -> str:
+    """HTML update body for a SAST finding."""
+    raw = finding.raw
+    rule = raw.get("rule") or {}
+    assistant = raw.get("assistant") or {}
+
+    comp_tag = _safe_get(assistant, "component", "tag")
+    comp_risk = _safe_get(assistant, "component", "risk")
+    comp_str = f"{comp_tag} (risk: {comp_risk})" if comp_tag else ""
+
+    fields = [
+        _fmt_field("AI Verdict", _safe_get(assistant, "autotriage", "verdict")),
+        _fmt_field("AI Reason", _safe_get(assistant, "autotriage", "reason")),
+        _fmt_field("AI Guidance", _safe_get(assistant, "guidance", "summary")),
+        _fmt_field("Rule Explanation", _safe_get(assistant, "rule_explanation", "summary")),
+        _fmt_field("CWE", _join_list(rule.get("cwe_names"))),
+        _fmt_field("OWASP", _join_list(rule.get("owasp_names"))),
+        _fmt_field("Vulnerability Classes", _join_list(rule.get("vulnerability_classes"))),
+        _fmt_field("Has Autofix", "Yes" if _safe_get(assistant, "autofix", "fix_code") else "No"),
+        _fmt_field("Component", comp_str),
+    ]
+    return "<br>".join(f for f in fields if f)
+
+
+def format_update_body_sca(finding: Finding) -> str:
+    """HTML update body for an SCA finding."""
+    raw = finding.raw
+    dep = raw.get("found_dependency") or {}
+    epss = raw.get("epss_score") or {}
+
+    fix_recs = raw.get("fix_recommendations") or []
+    fix_str = ", ".join(
+        f"{r['package']}@{r['version']}" for r in fix_recs if isinstance(r, dict)
+    )
+    epss_score = epss.get("score")
+    epss_pct = epss.get("percentile")
+    epss_str = (
+        f"{epss_score} (percentile: {epss_pct})"
+        if epss_score is not None and epss_pct is not None
+        else str(epss_score) if epss_score is not None else ""
+    )
+
+    fields = [
+        _fmt_field("CVE", _safe_get(raw, "vulnerability_identifier")),
+        _fmt_field("EPSS Score", epss_str),
+        _fmt_field("Reachability", _safe_get(raw, "reachability")),
+        _fmt_field("Reachable Condition", _safe_get(raw, "reachable_condition")),
+        _fmt_field("Package", _safe_get(dep, "package")),
+        _fmt_field("Version", _safe_get(dep, "version")),
+        _fmt_field("Ecosystem", _safe_get(dep, "ecosystem")),
+        _fmt_field("Transitivity", _safe_get(dep, "transitivity")),
+        _fmt_field("Fix Recommendation", fix_str),
+        _fmt_field("Is Malicious", "Yes" if raw.get("is_malicious") else "No"),
+    ]
+    return "<br>".join(f for f in fields if f)
+
+
+def format_update_body_secrets(finding: Finding) -> str:
+    """HTML update body for a Secrets finding."""
+    raw = finding.raw
+
+    fields = [
+        _fmt_field("Validation State", _safe_get(raw, "validation_state")),
+        _fmt_field("Confidence", _safe_get(raw, "confidence")),
+        _fmt_field("Triage State", _safe_get(raw, "triage_state")),
+        _fmt_field("Rule Message", _safe_get(raw, "rule_message")),
+        _fmt_field("Categories", _join_list(raw.get("categories"))),
+    ]
+    return "<br>".join(f for f in fields if f)
 
 
 # ---------------------------------------------------------------------------
@@ -228,9 +321,21 @@ def secrets_finding_to_item(finding: Finding, col_map: dict[str, str]) -> tuple[
 # ---------------------------------------------------------------------------
 
 BOARD_CONFIG = {
-    "SAST":    {"env_var": "MONDAY_BOARD_ID_SAST",    "mapper": sast_finding_to_item},
-    "SCA":     {"env_var": "MONDAY_BOARD_ID_SCA",      "mapper": sca_finding_to_item},
-    "Secrets": {"env_var": "MONDAY_BOARD_ID_SECRETS",   "mapper": secrets_finding_to_item},
+    "SAST": {
+        "env_var": "MONDAY_BOARD_ID_SAST",
+        "mapper": sast_finding_to_item,
+        "body_formatter": format_update_body_sast,
+    },
+    "SCA": {
+        "env_var": "MONDAY_BOARD_ID_SCA",
+        "mapper": sca_finding_to_item,
+        "body_formatter": format_update_body_sca,
+    },
+    "Secrets": {
+        "env_var": "MONDAY_BOARD_ID_SECRETS",
+        "mapper": secrets_finding_to_item,
+        "body_formatter": format_update_body_secrets,
+    },
 }
 
 
@@ -247,9 +352,10 @@ def run(state_path: Path = DEFAULT_STATE_FILE, limit: int | None = None) -> None
     state["daily"].setdefault(today, 0)
 
     # --- Build clients ---
+    slug = cfg["SEMGREP_DEPLOYMENT_SLUG"]
     semgrep = SemgrepClient(
         token=cfg["SEMGREP_APP_TOKEN"],
-        deployment_slug=cfg["SEMGREP_DEPLOYMENT_SLUG"],
+        deployment_slug=slug,
         deployment_id=cfg["SEMGREP_DEPLOYMENT_ID"],
     )
 
@@ -257,7 +363,11 @@ def run(state_path: Path = DEFAULT_STATE_FILE, limit: int | None = None) -> None
     for board_type, bc in BOARD_CONFIG.items():
         board_id = int(cfg[bc["env_var"]])
         client = MondayClient(token=cfg["MONDAY_API_TOKEN"], board_id=board_id)
-        boards[board_type] = {"client": client, "mapper": bc["mapper"]}
+        boards[board_type] = {
+            "client": client,
+            "mapper": bc["mapper"],
+            "body_formatter": bc["body_formatter"],
+        }
 
     # --- Fetch findings ---
     print("Fetching Semgrep findings…")
@@ -293,9 +403,11 @@ def run(state_path: Path = DEFAULT_STATE_FILE, limit: int | None = None) -> None
 
         col_map = col_maps[board_type]
         mapper = board["mapper"]
+        body_formatter = board["body_formatter"]
 
         for finding in new:
             item_name, col_vals = mapper(finding, col_map)
+            _set_col(col_vals, col_map, "Semgrep URL", _semgrep_finding_url(slug, finding))
             try:
                 monday_id, _ = board["client"].create_item(item_name, col_vals)
                 state["synced"][finding.id] = {
@@ -305,6 +417,11 @@ def run(state_path: Path = DEFAULT_STATE_FILE, limit: int | None = None) -> None
                 state["daily"][today] += 1
                 created += 1
                 print(f"  [{board_type}] {finding.id} → Monday item {monday_id}")
+                try:
+                    body = body_formatter(finding)
+                    board["client"].create_update(monday_id, body)
+                except MondayAPIError as exc:
+                    print(f"  [{board_type}] Warning: update post failed for {monday_id}: {exc}")
             except MondayAPIError as exc:
                 print(f"  [{board_type}] Failed for {finding.id}: {exc}")
 
