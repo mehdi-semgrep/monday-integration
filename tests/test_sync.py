@@ -264,6 +264,11 @@ def test_create_update_called_after_new_item(env_vars, state_file):
     mondays["SAST"].create_update.assert_called_once()
     item_id_arg, body_arg = mondays["SAST"].create_update.call_args[0]
     assert item_id_arg == "m-SAST"
+    # Header is always present
+    assert "[HIGH]" in body_arg
+    assert "js.xss" in body_arg
+    assert "src/app.js:42" in body_arg
+    # AI fields present when in raw
     assert "<b>AI Verdict:</b>" in body_arg
 
 

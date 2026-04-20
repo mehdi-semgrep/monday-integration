@@ -246,35 +246,77 @@ def secrets_finding_to_item(finding: Finding, col_map: dict[str, str]) -> tuple[
 # ---------------------------------------------------------------------------
 
 def format_update_body_sast(finding: Finding) -> str:
-    """HTML update body for a SAST finding."""
+    """HTML update body for a SAST finding — posted to the Monday.com Updates feed."""
     raw = finding.raw
     rule = raw.get("rule") or {}
     assistant = raw.get("assistant") or {}
 
+    sections = []
+
+    # --- Header ---
+    sections.append(
+        f"<b>[{finding.severity}]</b> {finding.rule_name} — "
+        f"{finding.file_path}:{finding.line} ({finding.repo})"
+    )
+
+    # --- Dynamically generated finding description (instance-specific narrative) ---
+    explanation = _safe_get(assistant, "rule_explanation", "explanation")
+    if explanation:
+        sections.append(f"<b>Finding Description</b><br>{explanation}")
+
+    # --- AI triage + taxonomy ---
     comp_tag = _safe_get(assistant, "component", "tag")
     comp_risk = _safe_get(assistant, "component", "risk")
     comp_str = f"{comp_tag} (risk: {comp_risk})" if comp_tag else ""
-
-    fields = [
+    meta = [
         _fmt_field("AI Verdict", _safe_get(assistant, "autotriage", "verdict")),
         _fmt_field("AI Reason", _safe_get(assistant, "autotriage", "reason")),
-        _fmt_field("AI Guidance", _safe_get(assistant, "guidance", "summary")),
-        _fmt_field("Rule Explanation", _safe_get(assistant, "rule_explanation", "summary")),
         _fmt_field("CWE", _join_list(rule.get("cwe_names"))),
         _fmt_field("OWASP", _join_list(rule.get("owasp_names"))),
         _fmt_field("Vulnerability Classes", _join_list(rule.get("vulnerability_classes"))),
-        _fmt_field("Has Autofix", "Yes" if _safe_get(assistant, "autofix", "fix_code") else "No"),
         _fmt_field("Component", comp_str),
+        _fmt_field("Triage State", _safe_get(raw, "triage_state")),
+        _fmt_field("Confidence", _safe_get(raw, "confidence")),
+        _fmt_field("Categories", _join_list(raw.get("categories"))),
+        _fmt_field("Sourcing Policy", _safe_get(raw, "sourcing_policy", "name")),
     ]
-    return "<br>".join(f for f in fields if f)
+    meta_block = "<br>".join(f for f in meta if f)
+    if meta_block:
+        sections.append(meta_block)
+
+    # --- Remediation ---
+    guidance_summary = _safe_get(assistant, "guidance", "summary")
+    guidance_instructions = _safe_get(assistant, "guidance", "instructions")
+    fix_code = _safe_get(assistant, "autofix", "fix_code")
+    if guidance_summary or guidance_instructions or fix_code:
+        remediation = ["<b>Remediation</b>"]
+        if guidance_summary:
+            remediation.append(_fmt_field("Summary", guidance_summary))
+        if guidance_instructions:
+            remediation.append(f"<b>Instructions:</b><br>{guidance_instructions}")
+        if fix_code:
+            remediation.append(f"<b>Suggested Fix:</b><br><pre>{fix_code}</pre>")
+        sections.append("<br>".join(remediation))
+
+    return "<br><br>".join(s for s in sections if s)
 
 
 def format_update_body_sca(finding: Finding) -> str:
-    """HTML update body for an SCA finding."""
+    """HTML update body for an SCA finding — posted to the Monday.com Updates feed."""
     raw = finding.raw
     dep = raw.get("found_dependency") or {}
     epss = raw.get("epss_score") or {}
 
+    # --- Header ---
+    pkg = _safe_get(dep, "package")
+    ver = _safe_get(dep, "version")
+    eco = _safe_get(dep, "ecosystem")
+    cve = _safe_get(raw, "vulnerability_identifier")
+    pkg_str = f"{pkg}@{ver} ({eco})" if pkg else ""
+    header_parts = [f"<b>[{finding.severity}]</b>", cve, pkg_str, f"({finding.repo})"]
+    sections = [" — ".join(p for p in header_parts if p)]
+
+    # --- Details ---
     fix_recs = raw.get("fix_recommendations") or []
     fix_str = ", ".join(
         f"{r['package']}@{r['version']}" for r in fix_recs if isinstance(r, dict)
@@ -286,34 +328,52 @@ def format_update_body_sca(finding: Finding) -> str:
         if epss_score is not None and epss_pct is not None
         else str(epss_score) if epss_score is not None else ""
     )
-
     fields = [
-        _fmt_field("CVE", _safe_get(raw, "vulnerability_identifier")),
-        _fmt_field("EPSS Score", epss_str),
         _fmt_field("Reachability", _safe_get(raw, "reachability")),
         _fmt_field("Reachable Condition", _safe_get(raw, "reachable_condition")),
-        _fmt_field("Package", _safe_get(dep, "package")),
-        _fmt_field("Version", _safe_get(dep, "version")),
-        _fmt_field("Ecosystem", _safe_get(dep, "ecosystem")),
+        _fmt_field("EPSS Score", epss_str),
+        _fmt_field("Package", pkg),
+        _fmt_field("Version", ver),
+        _fmt_field("Ecosystem", eco),
         _fmt_field("Transitivity", _safe_get(dep, "transitivity")),
         _fmt_field("Fix Recommendation", fix_str),
         _fmt_field("Is Malicious", "Yes" if raw.get("is_malicious") else "No"),
+        _fmt_field("Lockfile URL", _safe_get(dep, "lockfile_line_url")),
+        _fmt_field("Triage State", _safe_get(raw, "triage_state")),
+        _fmt_field("Confidence", _safe_get(raw, "confidence")),
+        _fmt_field("Categories", _join_list(raw.get("categories"))),
     ]
-    return "<br>".join(f for f in fields if f)
+    detail_block = "<br>".join(f for f in fields if f)
+    if detail_block:
+        sections.append(detail_block)
+
+    return "<br><br>".join(s for s in sections if s)
 
 
 def format_update_body_secrets(finding: Finding) -> str:
-    """HTML update body for a Secrets finding."""
+    """HTML update body for a Secrets finding — posted to the Monday.com Updates feed."""
     raw = finding.raw
 
+    # --- Header ---
+    sections = [
+        f"<b>[{finding.severity}]</b> {finding.rule_name} — "
+        f"{finding.file_path}:{finding.line} ({finding.repo})"
+    ]
+
+    # --- Details ---
     fields = [
         _fmt_field("Validation State", _safe_get(raw, "validation_state")),
         _fmt_field("Confidence", _safe_get(raw, "confidence")),
         _fmt_field("Triage State", _safe_get(raw, "triage_state")),
-        _fmt_field("Rule Message", _safe_get(raw, "rule_message")),
         _fmt_field("Categories", _join_list(raw.get("categories"))),
+        _fmt_field("Code URL", _safe_get(raw, "line_of_code_url")),
+        _fmt_field("External Ticket", _safe_get(raw, "external_ticket")),
     ]
-    return "<br>".join(f for f in fields if f)
+    detail_block = "<br>".join(f for f in fields if f)
+    if detail_block:
+        sections.append(detail_block)
+
+    return "<br><br>".join(s for s in sections if s)
 
 
 # ---------------------------------------------------------------------------
