@@ -1,29 +1,38 @@
 # Semgrep to Monday.com Integration
 
-Syncs security findings from the Semgrep Cloud Platform to Monday.com boards. Findings are separated into three dedicated boards with type-specific columns that preserve full context from the Semgrep API.
+Syncs security findings from the Semgrep Cloud Platform to Monday.com boards. Findings are separated into three dedicated boards with type-specific columns that preserve full context from the Semgrep API. Each new item also gets a rich HTML post in the Monday.com Updates feed containing the AI-generated finding narrative, remediation guidance, and suggested fix code.
 
 ```
 Semgrep Cloud API  -->  sync.py  -->  Monday.com GraphQL API
-  /findings (SAST)                      SAST Findings board
-  /findings (SCA)                       SCA Findings board
-  /secrets                              Secrets Findings board
+  /findings (SAST)                      SAST Findings board   (+ Updates feed)
+  /findings (SCA)                       SCA Findings board    (+ Updates feed)
+  /secrets                              Secrets Findings board (+ Updates feed)
 ```
 
 ## What Gets Synced
 
-**SAST board (22 columns)** -- AI triage verdict, CWE, OWASP, vulnerability classes, AI guidance, autofix availability, component risk, rule explanation, and more.
+**SAST board (23 columns)** -- AI triage verdict, CWE, OWASP, vulnerability classes, AI guidance, autofix availability, component risk, rule explanation, Semgrep deep-link, and more.
 
-**SCA board (22 columns)** -- CVE, reachability status, EPSS score/percentile, vulnerable package + version, ecosystem, transitivity, fix recommendations, malicious package flag.
+**SCA board (23 columns)** -- CVE, reachability status, EPSS score/percentile, vulnerable package + version, ecosystem, transitivity, fix recommendations, malicious package flag, Semgrep deep-link.
 
-**Secrets board (12 columns)** -- Validation state (confirmed valid/invalid/unvalidated), confidence, and standard finding metadata.
+**Secrets board (13 columns)** -- Validation state (confirmed valid/invalid/unvalidated), confidence, standard finding metadata, Semgrep deep-link.
 
-All boards include: Finding ID, severity, confidence, rule name, triage state, file location, repo, message, and code URL.
+All boards include: Finding ID, severity, confidence, rule name, triage state, file location, repo, message, code URL, and Semgrep URL.
+
+### Updates feed
+
+After creating each board item, the script posts an HTML update to the item's Updates panel containing:
+
+- Header with severity, rule, file:line, and repo
+- **SAST:** AI-generated finding description (instance-specific attack narrative), CWE/OWASP, component risk, triage state, and a Remediation section with numbered fix steps plus the suggested patch code
+- **SCA:** CVE, reachability, EPSS score, vulnerable package details, fix recommendation, lockfile URL
+- **Secrets:** validation state, code URL, external ticket
 
 ## Prerequisites
 
 - Python 3.10+
 - A Semgrep Cloud Platform account (Team or Enterprise tier for API access)
-- A Monday.com account (any tier)
+- A Monday.com account (any tier — see rate-limit notes below)
 
 ## Setup Guide
 
@@ -38,7 +47,7 @@ pip install -r requirements.txt
 
 ### 2. Get your Semgrep credentials
 
-1. **Deployment slug** -- visible in your browser URL bar: `semgrep.dev/orgs/<your-slug>`
+1. **Deployment slug** -- visible in your browser URL bar: `semgrep.dev/orgs/<your-slug>`.
 2. **Deployment ID** (numeric) -- go to Semgrep Cloud > Settings > Deployment. The numeric ID appears in the URL or on the page.
 3. **API token** -- go to Semgrep Cloud > Settings > Tokens > Generate new token. Select the **Web API** scope.
 
@@ -102,6 +111,11 @@ Use `--limit N` to cap the number of findings fetched per type. Useful for initi
 
 To re-sync everything, delete `state.json` and run again.
 
+### Error resilience
+
+- If a Monday.com item creation fails, the finding is **not** written to state and will be retried on the next run.
+- If the item was created but posting the Updates-feed body fails (transient network error, etc.), a warning is logged and the item is still persisted to state. The item exists on the board without the rich update body.
+
 ## Testing
 
 ```bash
@@ -157,7 +171,7 @@ The script handles Monday.com rate limiting automatically by respecting the `Ret
 | Pro | 10,000 |
 | Enterprise | 25,000 |
 
-With large finding counts, plan accordingly. A full sync of 1,000 findings requires ~1,003 API calls (3 column map queries + 1,000 create_item calls).
+**API calls per new finding:** each finding creates **two** Monday.com calls (one `create_item`, one `create_update`). A full sync of 1,000 new findings costs roughly **2,003 API calls** (3 column-map queries + 1,000 × 2). Plan your tier and cron cadence accordingly — idempotent re-runs only spend calls on *new* findings.
 
 ### Semgrep API
 
@@ -167,8 +181,10 @@ No documented rate limits for the findings REST API. The script uses reasonable 
 
 **404 on findings endpoint** -- verify your deployment slug is correct. It should match the URL path at `semgrep.dev/orgs/<slug>`, not your org display name.
 
-**Rate limited (429 errors)** -- the script auto-retries. If you're on a free Monday.com plan with 200 calls/day, use `--limit` to stay within budget.
+**Rate limited (429 errors)** -- the script auto-retries up to 3 times, honouring the `Retry-After` header. If you're on a free Monday.com plan with 200 calls/day, use `--limit` to stay within budget.
+
+**Update post failed: ...** -- the Monday.com item was created but the Updates-feed body couldn't be posted (usually a transient network reset). The finding is still recorded in state; only the rich update body is missing. Re-running will not re-attempt the failed update.
 
 **Empty secrets results** -- the `/secrets` endpoint uses a numeric deployment ID, not the slug. Verify `SEMGREP_DEPLOYMENT_ID` is correct. Also confirm that Secrets scanning is enabled in your Semgrep org.
 
-**Column not found errors** -- run `setup_boards.py` to create boards with the correct column layout. Don't manually add/rename columns.
+**Column not found errors** -- run `setup_boards.py` to create boards with the correct column layout. Don't manually add, rename, or delete columns on the boards the script writes to.
