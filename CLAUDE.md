@@ -16,7 +16,9 @@ Python integration that syncs Semgrep Cloud Platform findings (SAST, SCA, Secret
 
 - `Finding` dataclass carries a `raw: dict` with the full API response. Mapper functions extract type-specific fields for monday.com columns; formatter functions build the HTML update body from the same `raw` dict.
 - State v2 format: `{"version": 2, "synced": {"finding_id": {"monday_item_id": "...", "board": "SAST"}}, "daily": {...}}`. v1 is auto-migrated on load.
-- monday.com columns are all text type. Column IDs are auto-discovered per board via `get_column_map()` (cached per client).
+- monday.com column types: `text` (default), `status` (Severity, Confidence, Triage State, Validation State, Reachability, Transitivity, AI Verdict, etc.), `link` (Semgrep URL, Code URL), `dropdown` (Categories, Vuln Classes, OWASP). Column IDs are auto-discovered per board via `get_column_map()` (cached per client).
+- `create_item` uses `create_labels_if_missing: true` so status labels are created on the fly from whatever values the sync writes. Board columns are created with `defaults: {"labels": {}}` so no default labels ("Done", "Stuck", etc.) are pre-populated.
+- Field normalization: snake_case fields (triage_state, verdict) use `_snake_to_title()` → "True Positive". Single-word lowercase fields (confidence, reachability, transitivity) use `.capitalize()`. Secrets severity and confidence have `SEVERITY_`/`CONFIDENCE_` prefixes that are stripped before capitalizing. AI Verdict defaults to `"Not analyzed"` when absent.
 - `sync.run()` injects the Semgrep deep-link URL (`https://semgrep.dev/orgs/<slug>/findings/<id>` or `/secrets/<id>`) into the "Semgrep URL" column before creating the item.
 
 ## Error handling

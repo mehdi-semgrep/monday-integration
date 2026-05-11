@@ -4,17 +4,18 @@ This document describes how `sync.py` behaves when run autonomously (cron, Lambd
 
 ## Expected environment variables
 
-All 7 variables must be set. The script exits with code 1 and a clear error message if any are missing.
+All 6 variables must be set. The script exits with code 1 and a clear error message if any are missing.
 
 ```
 SEMGREP_APP_TOKEN
 SEMGREP_DEPLOYMENT_SLUG
-SEMGREP_DEPLOYMENT_ID
 MONDAY_API_TOKEN
 MONDAY_BOARD_ID_SAST
 MONDAY_BOARD_ID_SCA
 MONDAY_BOARD_ID_SECRETS
 ```
+
+The numeric deployment ID (required for the `/secrets` endpoint) is auto-discovered at runtime from the slug — no manual configuration needed.
 
 ## Behavior
 

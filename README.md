@@ -15,9 +15,9 @@ Semgrep Cloud API  -->  sync.py  -->  monday.com GraphQL API
 
 **SCA board (23 columns)** -- CVE, reachability status, EPSS score/percentile, vulnerable package + version, ecosystem, transitivity, fix recommendations, malicious package flag, Semgrep deep-link.
 
-**Secrets board (13 columns)** -- Validation state (confirmed valid/invalid/unvalidated), confidence, standard finding metadata, Semgrep deep-link.
+**Secrets board (11 columns)** -- Validation state (confirmed valid/invalid/unvalidated), confidence, standard finding metadata, Semgrep deep-link.
 
-All boards include: Finding ID, severity, confidence, rule name, triage state, file location, repo, message, code URL, and Semgrep URL.
+All boards include: Finding ID, severity, confidence, rule name, triage state, file location, repo, code URL, and Semgrep URL.
 
 ### Updates feed
 
@@ -48,8 +48,7 @@ pip install -r requirements.txt
 ### 2. Get your Semgrep credentials
 
 1. **Deployment slug** -- visible in your browser URL bar: `semgrep.dev/orgs/<your-slug>`.
-2. **Deployment ID** (numeric) -- go to Semgrep Cloud > Settings > Deployment. The numeric ID appears in the URL or on the page.
-3. **API token** -- go to Semgrep Cloud > Settings > Tokens > Generate new token. Select the **Web API** scope.
+2. **API token** -- go to Semgrep Cloud > Settings > Tokens > Generate new token. Select the **Web API** scope.
 
 ### 3. Get your monday.com credentials
 
@@ -86,7 +85,6 @@ python sync.py --limit 50   # sync up to 50 per type (for testing)
 |---|---|
 | `SEMGREP_APP_TOKEN` | Semgrep API token (Web API scope) |
 | `SEMGREP_DEPLOYMENT_SLUG` | Your org slug from `semgrep.dev/orgs/<slug>` |
-| `SEMGREP_DEPLOYMENT_ID` | Numeric deployment ID (used for /secrets endpoint) |
 | `MONDAY_API_TOKEN` | monday.com personal API token |
 | `MONDAY_BOARD_ID_SAST` | Board ID for SAST findings |
 | `MONDAY_BOARD_ID_SCA` | Board ID for SCA findings |
@@ -185,6 +183,6 @@ No documented rate limits for the findings REST API. The script uses reasonable 
 
 **Update post failed: ...** -- the monday.com item was created but the Updates-feed body couldn't be posted (usually a transient network reset). The finding is still recorded in state; only the rich update body is missing. Re-running will not re-attempt the failed update.
 
-**Empty secrets results** -- the `/secrets` endpoint uses a numeric deployment ID, not the slug. Verify `SEMGREP_DEPLOYMENT_ID` is correct. Also confirm that Secrets scanning is enabled in your Semgrep org.
+**Empty secrets results** -- confirm that Secrets scanning is enabled in your Semgrep org. The numeric deployment ID is auto-discovered from your slug; no manual configuration is needed.
 
 **Column not found errors** -- run `setup_boards.py` to create boards with the correct column layout. Don't manually add, rename, or delete columns on the boards the script writes to.
