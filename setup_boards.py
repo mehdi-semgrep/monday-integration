@@ -150,7 +150,7 @@ def create_columns(client: MondayClient, board_id: str, columns: list[str]) -> N
         data = client._post(query, {"boardId": board_id, "title": title, "colType": col_type, "defaults": defaults})
         col = data["data"]["create_column"]
         print(f"    {col['title']} ({col['id']}) [{col_type}]")
-        time.sleep(0.3)  # gentle rate limiting for column creation
+        time.sleep(0.3)
 
 
 def main():

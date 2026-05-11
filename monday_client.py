@@ -50,6 +50,12 @@ class MondayClient:
                 time.sleep(wait)
                 continue
 
+            if response.status_code == 403 and attempt < MAX_RETRIES - 1:
+                wait = 2 ** attempt
+                print(f"  [monday] 403 — retrying in {wait}s (attempt {attempt + 1}/{MAX_RETRIES})")
+                time.sleep(wait)
+                continue
+
             if response.status_code != 200:
                 raise MondayAPIError(f"HTTP {response.status_code}: {response.text[:300]}")
 
