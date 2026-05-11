@@ -55,7 +55,7 @@ Grouping reduces API spend — e.g. 10 SCA findings across 3 packages becomes 3 
 ```json
 {
   "version": 3,
-  "synced": {
+  "monday_items_created": {
     "<monday_item_id>": {
       "board": "SAST|SCA|Secrets",
       "finding_ids": ["<semgrep_finding_id>", "..."]
