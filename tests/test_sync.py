@@ -129,14 +129,14 @@ def test_new_finding_creates_item(env_vars, state_file):
     mondays["SAST"].create_item.assert_called_once()
     mondays["SCA"].create_item.assert_not_called()
     state = json.loads(state_file.read_text())
-    assert "1001" in state["synced"]
-    assert state["synced"]["1001"]["board"] == "SAST"
+    assert state["monday_items_created"]["m-SAST"]["finding_ids"] == ["1001"]
+    assert state["monday_items_created"]["m-SAST"]["board"] == "SAST"
 
 
 def test_existing_finding_skipped(env_vars, state_file):
     state_file.write_text(json.dumps({
-        "version": 2,
-        "synced": {"1001": {"monday_item_id": "existing", "board": "SAST"}},
+        "version": 3,
+        "monday_items_created": {"existing": {"board": "SAST", "finding_ids": ["1001"]}},
         "daily": {TODAY: 1},
     }))
     semgrep, mondays = _mock_clients(sast=[SAST_FINDING])
@@ -154,9 +154,9 @@ def test_state_persisted_on_success(env_vars, state_file):
         sync.run(state_path=state_file)
 
     state = json.loads(state_file.read_text())
-    assert state["synced"]["1001"]["monday_item_id"] == "m-SAST"
+    assert state["monday_items_created"]["m-SAST"]["finding_ids"] == ["1001"]
     assert state["daily"][TODAY] == 1
-    assert state["version"] == 2
+    assert state["version"] == 3
 
 
 def test_state_not_mutated_on_error(env_vars, state_file):
@@ -167,7 +167,8 @@ def test_state_not_mutated_on_error(env_vars, state_file):
         sync.run(state_path=state_file)
 
     state = json.loads(state_file.read_text())
-    assert "1001" not in state.get("synced", {})
+    all_fids = sync.synced_finding_ids(state)
+    assert "1001" not in all_fids
 
 
 # ---------------------------------------------------------------------------
@@ -190,9 +191,12 @@ def test_all_three_types_routed_to_correct_boards(env_vars, state_file):
     mondays["Secrets"].create_item.assert_called_once()
 
     state = json.loads(state_file.read_text())
-    assert state["synced"]["1001"]["board"] == "SAST"
-    assert state["synced"]["3001"]["board"] == "SCA"
-    assert state["synced"]["s-2001"]["board"] == "Secrets"
+    assert state["monday_items_created"]["m1"]["board"] == "SAST"
+    assert state["monday_items_created"]["m1"]["finding_ids"] == ["1001"]
+    assert state["monday_items_created"]["m2"]["board"] == "SCA"
+    assert state["monday_items_created"]["m2"]["finding_ids"] == ["3001"]
+    assert state["monday_items_created"]["m3"]["board"] == "Secrets"
+    assert state["monday_items_created"]["m3"]["finding_ids"] == ["s-2001"]
 
 
 # ---------------------------------------------------------------------------
@@ -221,15 +225,37 @@ def test_secrets_mapper_extracts_validation():
 # State migration v1 → v2
 # ---------------------------------------------------------------------------
 
-def test_state_v1_migrated_to_v2(tmp_path):
+def test_state_v1_migrated_to_v3(tmp_path):
     v1_state = {"synced": {"old-id": "monday-123"}, "daily": {}}
     path = tmp_path / "state.json"
     path.write_text(json.dumps(v1_state))
 
     state = sync.load_state(path)
-    assert state["version"] == 2
-    assert state["synced"]["old-id"]["monday_item_id"] == "monday-123"
-    assert state["synced"]["old-id"]["board"] == "unknown"
+    assert state["version"] == 3
+    assert "synced" not in state
+    assert state["monday_items_created"]["monday-123"]["finding_ids"] == ["old-id"]
+    assert state["monday_items_created"]["monday-123"]["board"] == "unknown"
+
+
+def test_state_v2_migrated_to_v3(tmp_path):
+    v2_state = {
+        "version": 2,
+        "synced": {
+            "f1": {"monday_item_id": "m100", "board": "SCA"},
+            "f2": {"monday_item_id": "m100", "board": "SCA"},
+            "f3": {"monday_item_id": "m200", "board": "SAST"},
+        },
+        "daily": {},
+    }
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps(v2_state))
+
+    state = sync.load_state(path)
+    assert state["version"] == 3
+    assert "synced" not in state
+    assert state["monday_items_created"]["m100"]["board"] == "SCA"
+    assert sorted(state["monday_items_created"]["m100"]["finding_ids"]) == ["f1", "f2"]
+    assert state["monday_items_created"]["m200"]["finding_ids"] == ["f3"]
 
 
 # ---------------------------------------------------------------------------
@@ -281,8 +307,7 @@ def test_create_update_failure_does_not_remove_from_state(env_vars, state_file):
 
     # create_update failure must not prevent the finding from being saved to state
     state = json.loads(state_file.read_text())
-    assert "1001" in state["synced"]
-    assert state["synced"]["1001"]["monday_item_id"] == "m-SAST"
+    assert state["monday_items_created"]["m-SAST"]["finding_ids"] == ["1001"]
 
 
 def test_semgrep_url_injected_into_column_values(env_vars, state_file):
@@ -452,8 +477,7 @@ def test_grouped_findings_all_tracked_in_state(env_vars, state_file):
         sync.run(state_path=state_file)
 
     state = json.loads(state_file.read_text())
-    assert "g1" in state["synced"]
-    assert "g2" in state["synced"]
-    assert state["synced"]["g1"]["monday_item_id"] == "m-grouped"
-    assert state["synced"]["g2"]["monday_item_id"] == "m-grouped"
+    assert "m-grouped" in state["monday_items_created"]
+    assert sorted(state["monday_items_created"]["m-grouped"]["finding_ids"]) == ["g1", "g2"]
+    assert state["monday_items_created"]["m-grouped"]["board"] == "SCA"
     mondays["SCA"].create_item.assert_called_once()

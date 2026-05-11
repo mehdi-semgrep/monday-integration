@@ -168,9 +168,9 @@ Filters gate new fetches only — existing items in `state.json` are never modif
 ### State file
 
 `state.json` stores:
-- `synced` -- mapping of Semgrep finding ID to monday.com item ID and board type
+- `synced` -- mapping of monday.com item ID to board type and list of Semgrep finding IDs (one-to-many for grouped findings)
 - `daily` -- API call count per day (informational)
-- `version` -- state format version (currently 2)
+- `version` -- state format version (currently 3)
 
 To re-sync everything, delete `state.json` and run again.
 

@@ -159,10 +159,10 @@ def test_full_sync_run(httpx_mock, env_vars, state_file):
     sync.run(state_path=state_file, filters_path=None)
 
     state = json.loads(state_file.read_text())
-    assert len(state["synced"]) == 4
-    assert state["synced"]["f1"]["board"] == "SAST"
-    assert state["synced"]["f3"]["board"] == "SCA"
-    assert state["synced"]["s1"]["board"] == "Secrets"
+    all_fids = sync.synced_finding_ids(state)
+    assert {"f1", "f2", "f3", "s1"} == all_fids
+    # 4 items: 2 SAST (different files) + 1 SCA + 1 Secrets
+    assert len(state["monday_items_created"]) == 4
     assert state["daily"][TODAY] == 4
 
 
@@ -181,7 +181,8 @@ def test_idempotent_second_run(httpx_mock, env_vars, state_file):
     sync.run(state_path=state_file, filters_path=None)
 
     state = json.loads(state_file.read_text())
-    assert len(state["synced"]) == 1
+    all_fids = sync.synced_finding_ids(state)
+    assert all_fids == {"f1"}
     assert state["daily"][TODAY] == 1
 
 
@@ -206,9 +207,10 @@ def test_partial_failure_recovery(httpx_mock, env_vars, state_file):
         sync.run(state_path=state_file, filters_path=None)
 
     state = json.loads(state_file.read_text())
-    assert "1" in state["synced"]
-    assert "2" in state["synced"]
-    assert "3" not in state["synced"]
+    all_fids = sync.synced_finding_ids(state)
+    assert "1" in all_fids
+    assert "2" in all_fids
+    assert "3" not in all_fids
 
 
 @pytest.mark.httpx_mock(assert_all_responses_were_requested=False)
@@ -231,8 +233,9 @@ def test_secrets_cursor_exhausted(httpx_mock, env_vars, state_file):
     sync.run(state_path=state_file, filters_path=None)
 
     state = json.loads(state_file.read_text())
-    assert set(state["synced"].keys()) == {"s1", "s2"}
-    assert all(s["board"] == "Secrets" for s in state["synced"].values())
+    all_fids = sync.synced_finding_ids(state)
+    assert all_fids == {"s1", "s2"}
+    assert all(s["board"] == "Secrets" for s in state["monday_items_created"].values())
 
 
 def test_sca_grouping_creates_single_item(httpx_mock, env_vars, state_file):
@@ -251,7 +254,10 @@ def test_sca_grouping_creates_single_item(httpx_mock, env_vars, state_file):
     sync.run(state_path=state_file, filters_path=None)
 
     state = json.loads(state_file.read_text())
-    assert len(state["synced"]) == 2
-    assert state["synced"]["f1"]["board"] == "SCA"
-    assert state["synced"]["f2"]["board"] == "SCA"
-    assert state["synced"]["f1"]["monday_item_id"] == state["synced"]["f2"]["monday_item_id"]
+    all_fids = sync.synced_finding_ids(state)
+    assert all_fids == {"f1", "f2"}
+    # Grouped into 1 monday item
+    assert len(state["monday_items_created"]) == 1
+    item = list(state["monday_items_created"].values())[0]
+    assert item["board"] == "SCA"
+    assert sorted(item["finding_ids"]) == ["f1", "f2"]

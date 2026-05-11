@@ -54,11 +54,11 @@ Grouping reduces API spend — e.g. 10 SCA findings across 3 packages becomes 3 
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "synced": {
-    "<semgrep_finding_id>": {
-      "monday_item_id": "<monday_item_id>",
-      "board": "SAST|SCA|Secrets"
+    "<monday_item_id>": {
+      "board": "SAST|SCA|Secrets",
+      "finding_ids": ["<semgrep_finding_id>", "..."]
     }
   },
   "daily": {
@@ -67,7 +67,7 @@ Grouping reduces API spend — e.g. 10 SCA findings across 3 packages becomes 3 
 }
 ```
 
-State v1 files (from earlier versions) are automatically migrated on load.
+Keyed by monday.com item ID. `finding_ids` lists all Semgrep findings mapped to that item (one for ungrouped, multiple for grouped). State v1 and v2 files are automatically migrated on load.
 
 To force a full re-sync, delete `state.json` before running.
 

@@ -28,7 +28,7 @@ from semgrep_client import Finding, SemgrepAPIError, SemgrepClient
 
 DEFAULT_STATE_FILE = Path(__file__).parent / "state.json"
 DEFAULT_FILTERS_FILE = Path(__file__).parent / "filters.yaml"
-STATE_VERSION = 2
+STATE_VERSION = 3
 
 
 # ---------------------------------------------------------------------------
@@ -193,17 +193,43 @@ def _semgrep_finding_url(slug: str, finding: Finding) -> str:
 
 def load_state(path: Path) -> dict:
     if not path.exists():
-        return {"synced": {}, "daily": {}, "version": STATE_VERSION}
+        return {"monday_items_created": {}, "daily": {}, "version": STATE_VERSION}
     state = json.loads(path.read_text())
-    # Migrate v1 → v2
-    if state.get("version", 1) < STATE_VERSION:
-        old_synced = state.get("synced", {})
-        state["synced"] = {
+    version = state.get("version", 1)
+    # v1 and v2 used the key "synced"
+    old_key = "synced" if version < 3 else "monday_items_created"
+    # Migrate v1 → v2 (finding_id → {monday_item_id, board})
+    if version < 2:
+        old_synced = state.get(old_key, {})
+        state[old_key] = {
             fid: {"monday_item_id": mid, "board": "unknown"}
             for fid, mid in old_synced.items()
         }
-        state["version"] = STATE_VERSION
+        version = 2
+    # Migrate v2 → v3 (invert: key by monday_item_id, collect finding_ids; rename key)
+    if version < 3:
+        v2_synced = state.get(old_key, {})
+        v3: dict[str, dict] = {}
+        for fid, entry in v2_synced.items():
+            mid = str(entry["monday_item_id"])
+            if mid in v3:
+                v3[mid]["finding_ids"].append(str(fid))
+            else:
+                v3[mid] = {
+                    "board": entry.get("board", "unknown"),
+                    "finding_ids": [str(fid)],
+                }
+        state.pop("synced", None)
+        state["monday_items_created"] = v3
+    state["version"] = STATE_VERSION
     return state
+
+
+def synced_finding_ids(state: dict) -> set[str]:
+    ids: set[str] = set()
+    for item in state.get("monday_items_created", {}).values():
+        ids.update(item.get("finding_ids", []))
+    return ids
 
 
 def save_state(state: dict, path: Path) -> None:
@@ -707,7 +733,7 @@ def run(
     print(f"  Total: {total}")
 
     # --- Deduplicate against previously synced ---
-    already_synced = set(state.get("synced", {}).keys())
+    already_synced = synced_finding_ids(state)
 
     # --- Fetch column maps (one per board, only if that board has new findings) ---
     col_maps: dict[str, dict] = {}
@@ -745,11 +771,10 @@ def run(
             _set_link_col(col_vals, col_map, "Semgrep URL", _semgrep_finding_url(slug, finding))
             try:
                 monday_id, _ = board["client"].create_item(item_name, col_vals)
-                for f in group.members:
-                    state["synced"][f.id] = {
-                        "monday_item_id": monday_id,
-                        "board": board_type,
-                    }
+                state["monday_items_created"][monday_id] = {
+                    "board": board_type,
+                    "finding_ids": [f.id for f in group.members],
+                }
                 state["daily"][today] += 1
                 created += 1
                 member_ids = ", ".join(f.id for f in group.members)
@@ -786,9 +811,9 @@ def run(
             _set_link_col(col_vals, col_map, "Semgrep URL", _semgrep_finding_url(slug, finding))
             try:
                 monday_id, _ = board["client"].create_item(item_name, col_vals)
-                state["synced"][finding.id] = {
-                    "monday_item_id": monday_id,
+                state["monday_items_created"][monday_id] = {
                     "board": "Secrets",
+                    "finding_ids": [finding.id],
                 }
                 state["daily"][today] += 1
                 created += 1
@@ -802,7 +827,6 @@ def run(
                 print(f"  [Secrets] Failed for {finding.id}: {exc}")
 
     save_state(state, state_path)
-    failed = total_new_findings - sum(1 for f_list in findings_by_type.values() for f in f_list if f.id in state.get("synced", {})) + len(already_synced)
     print(f"\nDone: {created} items created, {total_new_findings} new findings processed.")
 
 
