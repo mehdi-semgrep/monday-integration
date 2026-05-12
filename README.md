@@ -173,7 +173,7 @@ secrets:
 | `repo` | ✓ | ✓ | ✓ |
 | `rule` | ✓ | | |
 | `ai_verdict` | ✓ (true_positive, false_positive, not_analyzed¹) | | |
-| `status` | ✓ (open/fixed/muted) | ✓ | |
+| `status` | ✓ (open/fixed/ignored/reviewing/fixing/provisionally_ignored) | ✓ | |
 | `reachability` | | ✓ | |
 | `transitivity` | | ✓ | |
 | `validation_state` | | | ✓ |
@@ -185,9 +185,9 @@ Filters gate new fetches only — existing items in `state.json` are never modif
 ### State file
 
 `state.json` stores:
-- `monday_items_created` -- mapping of monday.com item ID to board type and list of Semgrep finding IDs (one-to-many for grouped findings)
+- `monday_items_created` -- nested by board type (`SAST`, `SCA`, `Secrets`), then monday.com item ID → list of Semgrep finding IDs (one-to-many for grouped findings)
 - `daily` -- API call count per day (informational)
-- `version` -- state format version (currently 3)
+- `version` -- state format version (currently 4)
 
 To re-sync everything, delete `state.json` and run again.
 

@@ -19,7 +19,7 @@
 #     repo            — [org/repo1, org/repo2]          (repeatable — any match)
 #     rule            — [rule.id.one, rule.id.two]      (repeatable — any match)
 #     ai_verdict      — [true_positive | false_positive] (single value only — scalar param)
-#     status          — [open, fixed, muted]            (repeatable — overrides hardcoded open default)
+#     status          — [open, fixed, ignored, reviewing, fixing, provisionally_ignored]
 #
 #   sca:
 #     severity        — [low, medium, high, critical]  (repeatable — any match)
@@ -27,7 +27,7 @@
 #     repo            — [org/repo1, org/repo2]          (repeatable — any match)
 #     reachability    — [reachable, always_reachable, conditionally_reachable, unreachable, unknown]
 #     transitivity    — [direct, transitive, unknown]
-#     status          — [open, fixed, muted]            (repeatable — overrides hardcoded open default)
+#     status          — [open, fixed, ignored, reviewing, fixing, provisionally_ignored]
 #
 #   secrets:
 #     severity         — [SEVERITY_HIGH, SEVERITY_CRITICAL, SEVERITY_MEDIUM, SEVERITY_LOW]

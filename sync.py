@@ -29,7 +29,7 @@ from semgrep_client import Finding, SemgrepAPIError, SemgrepClient
 
 DEFAULT_STATE_FILE = Path(__file__).parent / "state.json"
 DEFAULT_FILTERS_FILE = Path(__file__).parent / "filters.yaml"
-STATE_VERSION = 3
+STATE_VERSION = 4
 
 
 # ---------------------------------------------------------------------------
@@ -206,9 +206,13 @@ def _monday_item_url(account_slug: str, board_id: int, item_id: str) -> str:
 # State helpers
 # ---------------------------------------------------------------------------
 
+def _empty_items() -> dict:
+    return {"SAST": {}, "SCA": {}, "Secrets": {}}
+
+
 def load_state(path: Path) -> dict:
     if not path.exists():
-        return {"monday_items_created": {}, "daily": {}, "version": STATE_VERSION}
+        return {"monday_items_created": _empty_items(), "daily": {}, "version": STATE_VERSION}
     state = json.loads(path.read_text())
     version = state.get("version", 1)
     # v1 and v2 used the key "synced"
@@ -236,14 +240,26 @@ def load_state(path: Path) -> dict:
                 }
         state.pop("synced", None)
         state["monday_items_created"] = v3
+        version = 3
+    # Migrate v3 → v4 (nest by board type)
+    if version < 4:
+        v3_items = state.get("monday_items_created", {})
+        v4 = _empty_items()
+        for mid, entry in v3_items.items():
+            board = entry.get("board", "unknown")
+            if board in v4:
+                v4[board][mid] = entry.get("finding_ids", [])
+            else:
+                v4.setdefault(board, {})[mid] = entry.get("finding_ids", [])
+        state["monday_items_created"] = v4
     state["version"] = STATE_VERSION
     return state
 
 
-def synced_finding_ids(state: dict) -> set[str]:
+def synced_finding_ids(state: dict, board_type: str) -> set[str]:
     ids: set[str] = set()
-    for item in state.get("monday_items_created", {}).values():
-        ids.update(item.get("finding_ids", []))
+    for fids in state.get("monday_items_created", {}).get(board_type, {}).values():
+        ids.update(fids)
     return ids
 
 
@@ -757,9 +773,6 @@ def run(
     total = sum(len(v) for v in findings_by_type.values())
     print(f"  Total: {total}")
 
-    # --- Deduplicate against previously synced ---
-    already_synced = synced_finding_ids(state)
-
     # --- Fetch column maps (one per board, only if that board has new findings) ---
     col_maps: dict[str, dict] = {}
 
@@ -770,6 +783,7 @@ def run(
     # --- SAST and SCA: group findings, create one item per group ---
     for board_type in ("SAST", "SCA"):
         type_findings = findings_by_type.get(board_type, [])
+        already_synced = synced_finding_ids(state, board_type)
         new = [f for f in type_findings if f.id not in already_synced]
         total_new_findings += len(new)
         if not new:
@@ -796,10 +810,9 @@ def run(
             _set_link_col(col_vals, col_map, "Semgrep URL", _semgrep_finding_url(slug, finding))
             try:
                 monday_id, _ = board["client"].create_item(item_name, col_vals)
-                state["monday_items_created"][monday_id] = {
-                    "board": board_type,
-                    "finding_ids": [f.id for f in group.members],
-                }
+                state["monday_items_created"][board_type][monday_id] = [
+                    f.id for f in group.members
+                ]
                 state["daily"][today] += 1
                 created += 1
                 member_ids = ", ".join(f.id for f in group.members)
@@ -830,7 +843,8 @@ def run(
 
     # --- Secrets: no grouping, one item per finding ---
     secrets_findings = findings_by_type.get("Secrets", [])
-    new_secrets = [f for f in secrets_findings if f.id not in already_synced]
+    already_synced_secrets = synced_finding_ids(state, "Secrets")
+    new_secrets = [f for f in secrets_findings if f.id not in already_synced_secrets]
     total_new_findings += len(new_secrets)
     if new_secrets:
         board = boards["Secrets"]
@@ -845,10 +859,7 @@ def run(
             _set_link_col(col_vals, col_map, "Semgrep URL", _semgrep_finding_url(slug, finding))
             try:
                 monday_id, _ = board["client"].create_item(item_name, col_vals)
-                state["monday_items_created"][monday_id] = {
-                    "board": "Secrets",
-                    "finding_ids": [finding.id],
-                }
+                state["monday_items_created"]["Secrets"][monday_id] = [finding.id]
                 state["daily"][today] += 1
                 created += 1
                 print(f"  [Secrets] {finding.id} → monday item {monday_id}")

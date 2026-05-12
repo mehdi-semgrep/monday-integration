@@ -171,10 +171,15 @@ def test_full_sync_run(httpx_mock, env_vars, state_file):
     sync.run(state_path=state_file, filters_path=None)
 
     state = json.loads(state_file.read_text())
-    all_fids = sync.synced_finding_ids(state)
+    all_fids = (
+        sync.synced_finding_ids(state, "SAST")
+        | sync.synced_finding_ids(state, "SCA")
+        | sync.synced_finding_ids(state, "Secrets")
+    )
     assert {"101", "102", "201", "301"} == all_fids
     # 4 items: 2 SAST (different files) + 1 SCA + 1 Secrets
-    assert len(state["monday_items_created"]) == 4
+    items = state["monday_items_created"]
+    assert len(items["SAST"]) + len(items["SCA"]) + len(items["Secrets"]) == 4
     assert state["daily"][TODAY] == 4
 
 
@@ -194,8 +199,7 @@ def test_idempotent_second_run(httpx_mock, env_vars, state_file):
     sync.run(state_path=state_file, filters_path=None)
 
     state = json.loads(state_file.read_text())
-    all_fids = sync.synced_finding_ids(state)
-    assert all_fids == {"101"}
+    assert sync.synced_finding_ids(state, "SAST") == {"101"}
     assert state["daily"][TODAY] == 1
 
 
@@ -220,10 +224,10 @@ def test_partial_failure_recovery(httpx_mock, env_vars, state_file):
         sync.run(state_path=state_file, filters_path=None)
 
     state = json.loads(state_file.read_text())
-    all_fids = sync.synced_finding_ids(state)
-    assert "1" in all_fids
-    assert "2" in all_fids
-    assert "3" not in all_fids
+    sast_fids = sync.synced_finding_ids(state, "SAST")
+    assert "1" in sast_fids
+    assert "2" in sast_fids
+    assert "3" not in sast_fids
 
 
 @pytest.mark.httpx_mock(assert_all_responses_were_requested=False)
@@ -246,9 +250,8 @@ def test_secrets_cursor_exhausted(httpx_mock, env_vars, state_file):
     sync.run(state_path=state_file, filters_path=None)
 
     state = json.loads(state_file.read_text())
-    all_fids = sync.synced_finding_ids(state)
-    assert all_fids == {"301", "302"}
-    assert all(s["board"] == "Secrets" for s in state["monday_items_created"].values())
+    assert sync.synced_finding_ids(state, "Secrets") == {"301", "302"}
+    assert len(state["monday_items_created"]["Secrets"]) == 2
 
 
 def test_sca_grouping_creates_single_item(httpx_mock, env_vars, state_file):
@@ -267,13 +270,10 @@ def test_sca_grouping_creates_single_item(httpx_mock, env_vars, state_file):
     sync.run(state_path=state_file, filters_path=None)
 
     state = json.loads(state_file.read_text())
-    all_fids = sync.synced_finding_ids(state)
-    assert all_fids == {"201", "202"}
-    # Grouped into 1 monday item
-    assert len(state["monday_items_created"]) == 1
-    item = list(state["monday_items_created"].values())[0]
-    assert item["board"] == "SCA"
-    assert sorted(item["finding_ids"]) == ["201", "202"]
+    assert sync.synced_finding_ids(state, "SCA") == {"201", "202"}
+    assert len(state["monday_items_created"]["SCA"]) == 1
+    item_fids = list(state["monday_items_created"]["SCA"].values())[0]
+    assert sorted(item_fids) == ["201", "202"]
 
 
 def test_set_triage_reviewing_flag(httpx_mock, env_vars, state_file):
@@ -286,7 +286,7 @@ def test_set_triage_reviewing_flag(httpx_mock, env_vars, state_file):
     sync.run(state_path=state_file, filters_path=None, set_triage_reviewing=True)
 
     state = json.loads(state_file.read_text())
-    assert sync.synced_finding_ids(state) == {"101"}
+    assert sync.synced_finding_ids(state, "SAST") == {"101"}
 
     triage_reqs = [r for r in httpx_mock.get_requests() if "triage" in str(r.url)]
     assert len(triage_reqs) == 1

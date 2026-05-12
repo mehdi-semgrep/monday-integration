@@ -52,16 +52,15 @@ Each group (or individual Secrets finding) consumes **2** monday.com API calls (
 
 Grouping reduces API spend — e.g. 10 SCA findings across 3 packages becomes 3 items (6 monday calls + 3 triage calls) instead of 10 items (20 monday calls + 10 triage calls). Idempotent re-runs only spend calls on findings that haven't been synced before.
 
-## State file format (v2)
+## State file format (v4)
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "monday_items_created": {
-    "<monday_item_id>": {
-      "board": "SAST|SCA|Secrets",
-      "finding_ids": ["<semgrep_finding_id>", "..."]
-    }
+    "SAST": { "<monday_item_id>": ["<finding_id>", "..."] },
+    "SCA": { "<monday_item_id>": ["<finding_id>", "..."] },
+    "Secrets": { "<monday_item_id>": ["<finding_id>"] }
   },
   "daily": {
     "YYYY-MM-DD": <call_count>
@@ -69,7 +68,7 @@ Grouping reduces API spend — e.g. 10 SCA findings across 3 packages becomes 3 
 }
 ```
 
-Keyed by monday.com item ID. `finding_ids` lists all Semgrep findings mapped to that item (one for ungrouped, multiple for grouped). State v1 and v2 files are automatically migrated on load.
+Top-level keys are board types. Each maps monday.com item IDs to lists of Semgrep finding IDs (one for ungrouped, multiple for grouped). State v1–v3 files are automatically migrated on load.
 
 To force a full re-sync, delete `state.json` before running.
 
