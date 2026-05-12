@@ -23,6 +23,7 @@ ALLOWED_FILTERS: dict[str, dict[str, str]] = {
         "repo": "repos",                    # Array of strings: org/repo
         "rule": "rules",                    # Array of strings: rule IDs
         "ai_verdict": "autotriage_verdict", # Scalar string: true_positive, false_positive
+        "status": "status",                # Array: open, fixed, muted (overrides hardcoded default)
     },
     "sca": {
         "severity": "severities",           # Array of strings: low, medium, high, critical
@@ -30,6 +31,7 @@ ALLOWED_FILTERS: dict[str, dict[str, str]] = {
         "repo": "repos",                    # Array of strings: org/repo
         "reachability": "exposures",        # Array: reachable, always_reachable, conditionally_reachable, unreachable, unknown
         "transitivity": "transitivities",   # Array: direct, transitive, unknown
+        "status": "status",                # Array: open, fixed, muted (overrides hardcoded default)
     },
     "secrets": {
         # Verified against /deployments/<id>/secrets API docs (2025-05).

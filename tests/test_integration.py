@@ -17,7 +17,10 @@ TODAY = str(date.today())
 SEMGREP_FINDINGS_URL = "https://semgrep.dev/api/v1/deployments/acme-corp/findings"
 SEMGREP_DEPLOYMENTS_URL = "https://semgrep.dev/api/v1/deployments"
 SEMGREP_SECRETS_URL = "https://semgrep.dev/api/v1/deployments/20169/secrets"
+SEMGREP_TRIAGE_URL = "https://semgrep.dev/api/v1/deployments/acme-corp/triage"
 MONDAY_URL = "https://api.monday.com/v2"
+
+ACCOUNT_SLUG_RESP = {"data": {"account": {"slug": "acme-test"}}}
 
 DEPLOYMENTS_RESP = {"deployments": [{"id": 20169, "slug": "acme-corp", "name": "Acme Corp"}]}
 
@@ -116,13 +119,22 @@ def _add_secrets(httpx_mock, secrets):
     )
 
 
-def _add_monday_responses(httpx_mock, n_sast=0, n_sca=0, n_secrets=0):
+def _add_triage_responses(httpx_mock, n):
+    """Register Semgrep triage POST responses (one per item created)."""
+    for _ in range(n):
+        httpx_mock.add_response(url=SEMGREP_TRIAGE_URL, method="POST", json={})
+
+
+def _add_monday_responses(httpx_mock, n_sast=0, n_sca=0, n_secrets=0, with_triage=False):
     """Register monday responses in actual call order: col query → creates per board."""
     counter = [0]
 
     def next_id():
         counter[0] += 1
         return f"m{counter[0]}"
+
+    if with_triage:
+        httpx_mock.add_response(url=MONDAY_URL, json=ACCOUNT_SLUG_RESP)
 
     # SAST board: column query then interleaved create_item + create_update per finding
     if n_sast > 0:
@@ -151,16 +163,16 @@ def _add_monday_responses(httpx_mock, n_sast=0, n_sca=0, n_secrets=0):
 # ---------------------------------------------------------------------------
 
 def test_full_sync_run(httpx_mock, env_vars, state_file):
-    _add_semgrep_pages(httpx_mock, "sast", [_sast_finding("f1"), _sast_finding("f2")])
-    _add_semgrep_pages(httpx_mock, "sca", [_sca_finding("f3")])
-    _add_secrets(httpx_mock, [_secret_finding("s1")])
+    _add_semgrep_pages(httpx_mock, "sast", [_sast_finding("101"), _sast_finding("102")])
+    _add_semgrep_pages(httpx_mock, "sca", [_sca_finding("201")])
+    _add_secrets(httpx_mock, [_secret_finding("301")])
     _add_monday_responses(httpx_mock, n_sast=2, n_sca=1, n_secrets=1)
 
     sync.run(state_path=state_file, filters_path=None)
 
     state = json.loads(state_file.read_text())
     all_fids = sync.synced_finding_ids(state)
-    assert {"f1", "f2", "f3", "s1"} == all_fids
+    assert {"101", "102", "201", "301"} == all_fids
     # 4 items: 2 SAST (different files) + 1 SCA + 1 Secrets
     assert len(state["monday_items_created"]) == 4
     assert state["daily"][TODAY] == 4
@@ -168,21 +180,22 @@ def test_full_sync_run(httpx_mock, env_vars, state_file):
 
 def test_idempotent_second_run(httpx_mock, env_vars, state_file):
     # First run
-    _add_semgrep_pages(httpx_mock, "sast", [_sast_finding("f1")])
+    _add_semgrep_pages(httpx_mock, "sast", [_sast_finding("101")])
     _add_semgrep_pages(httpx_mock, "sca", [])
     _add_secrets(httpx_mock, [])
     _add_monday_responses(httpx_mock, n_sast=1)
     sync.run(state_path=state_file, filters_path=None)
 
     # Second run — same finding, should be skipped
-    _add_semgrep_pages(httpx_mock, "sast", [_sast_finding("f1")])
+    _add_semgrep_pages(httpx_mock, "sast", [_sast_finding("101")])
     _add_semgrep_pages(httpx_mock, "sca", [])
     _add_secrets(httpx_mock, [])
+    _add_monday_responses(httpx_mock)
     sync.run(state_path=state_file, filters_path=None)
 
     state = json.loads(state_file.read_text())
     all_fids = sync.synced_finding_ids(state)
-    assert all_fids == {"f1"}
+    assert all_fids == {"101"}
     assert state["daily"][TODAY] == 1
 
 
@@ -198,10 +211,10 @@ def test_partial_failure_recovery(httpx_mock, env_vars, state_file):
 
     monday = MagicMock()
     monday.get_column_map.return_value = {"Finding ID": "c0", "Severity": "c1", "Rule": "c2", "File": "c3", "Repo": "c4"}
+    monday.get_account_slug.return_value = "acme-test"
     monday.create_item.side_effect = [
         ("m1", 0), ("m2", 0), MondayAPIError("fail"),
     ]
-
     board_map = {1001: monday, 1002: MagicMock(), 1003: MagicMock()}
     with patch("sync.MondayClient", side_effect=lambda token, board_id: board_map[board_id]):
         sync.run(state_path=state_file, filters_path=None)
@@ -221,11 +234,11 @@ def test_secrets_cursor_exhausted(httpx_mock, env_vars, state_file):
     httpx_mock.add_response(url=SEMGREP_DEPLOYMENTS_URL, json=DEPLOYMENTS_RESP)
     httpx_mock.add_response(
         url=f"{SEMGREP_SECRETS_URL}?limit=100",
-        json={"findings": [_secret_finding("s1")], "cursor": "abc"},
+        json={"findings": [_secret_finding("301")], "cursor": "abc"},
     )
     httpx_mock.add_response(
         url=f"{SEMGREP_SECRETS_URL}?limit=100&cursor=abc",
-        json={"findings": [_secret_finding("s2")], "cursor": ""},
+        json={"findings": [_secret_finding("302")], "cursor": ""},
     )
 
     _add_monday_responses(httpx_mock, n_secrets=2)
@@ -234,15 +247,15 @@ def test_secrets_cursor_exhausted(httpx_mock, env_vars, state_file):
 
     state = json.loads(state_file.read_text())
     all_fids = sync.synced_finding_ids(state)
-    assert all_fids == {"s1", "s2"}
+    assert all_fids == {"301", "302"}
     assert all(s["board"] == "Secrets" for s in state["monday_items_created"].values())
 
 
 def test_sca_grouping_creates_single_item(httpx_mock, env_vars, state_file):
     """Two SCA findings with same {repo, package, version} produce one monday item."""
-    sca1 = _sca_finding("f1", severity="CRITICAL")
+    sca1 = _sca_finding("201", severity="CRITICAL")
     sca1["vulnerability_identifier"] = "CVE-2024-001"
-    sca2 = _sca_finding("f2", severity="HIGH")
+    sca2 = _sca_finding("202", severity="HIGH")
     sca2["vulnerability_identifier"] = "CVE-2024-002"
 
     _add_semgrep_pages(httpx_mock, "sast", [])
@@ -255,9 +268,30 @@ def test_sca_grouping_creates_single_item(httpx_mock, env_vars, state_file):
 
     state = json.loads(state_file.read_text())
     all_fids = sync.synced_finding_ids(state)
-    assert all_fids == {"f1", "f2"}
+    assert all_fids == {"201", "202"}
     # Grouped into 1 monday item
     assert len(state["monday_items_created"]) == 1
     item = list(state["monday_items_created"].values())[0]
     assert item["board"] == "SCA"
-    assert sorted(item["finding_ids"]) == ["f1", "f2"]
+    assert sorted(item["finding_ids"]) == ["201", "202"]
+
+
+def test_set_triage_reviewing_flag(httpx_mock, env_vars, state_file):
+    _add_semgrep_pages(httpx_mock, "sast", [_sast_finding("101")])
+    _add_semgrep_pages(httpx_mock, "sca", [])
+    _add_secrets(httpx_mock, [])
+    _add_monday_responses(httpx_mock, n_sast=1, with_triage=True)
+    _add_triage_responses(httpx_mock, 1)
+
+    sync.run(state_path=state_file, filters_path=None, set_triage_reviewing=True)
+
+    state = json.loads(state_file.read_text())
+    assert sync.synced_finding_ids(state) == {"101"}
+
+    triage_reqs = [r for r in httpx_mock.get_requests() if "triage" in str(r.url)]
+    assert len(triage_reqs) == 1
+    import json as _json
+    body = _json.loads(triage_reqs[0].content)
+    assert body["new_triage_state"] == "reviewing"
+    assert body["issue_ids"] == [101]
+    assert "Created monday item:" in body["new_note"]

@@ -92,6 +92,7 @@ def _mock_clients(sast=None, sca=None, secrets=None):
     for board_type, col_map in [("SAST", SAST_COL_MAP), ("SCA", SCA_COL_MAP), ("Secrets", SECRETS_COL_MAP)]:
         m = MagicMock()
         m.get_column_map.return_value = col_map
+        m.get_account_slug.return_value = "acme-test"
         m.create_item.return_value = (f"m-{board_type}", 0)
         m.create_update.return_value = f"u-{board_type}"
         monday_mocks[board_type] = m
@@ -481,3 +482,89 @@ def test_grouped_findings_all_tracked_in_state(env_vars, state_file):
     assert sorted(state["monday_items_created"]["m-grouped"]["finding_ids"]) == ["g1", "g2"]
     assert state["monday_items_created"]["m-grouped"]["board"] == "SCA"
     mondays["SCA"].create_item.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Triage-on-sync
+# ---------------------------------------------------------------------------
+
+def test_triage_not_called_by_default(env_vars, state_file):
+    semgrep, mondays = _mock_clients(sast=[SAST_FINDING])
+    p1, p2 = _patch_clients(semgrep, mondays)
+    with p1, p2:
+        sync.run(state_path=state_file)
+
+    semgrep.triage_findings.assert_not_called()
+
+
+def test_triage_called_after_sast_item_creation(env_vars, state_file):
+    semgrep, mondays = _mock_clients(sast=[SAST_FINDING])
+    mondays["SAST"].create_item.return_value = ("m99", 0)
+    p1, p2 = _patch_clients(semgrep, mondays)
+    with p1, p2:
+        sync.run(state_path=state_file, set_triage_reviewing=True)
+
+    semgrep.triage_findings.assert_called_once()
+    call_args = semgrep.triage_findings.call_args
+    assert call_args[0][0] == ["1001"]
+    assert call_args[0][1] == "reviewing"
+    assert "m99" in call_args[0][2]
+    assert call_args[0][3] == "sast"
+
+
+def test_triage_called_after_secrets_item_creation(env_vars, state_file):
+    semgrep, mondays = _mock_clients(secrets=[SECRET_FINDING])
+    mondays["Secrets"].create_item.return_value = ("m77", 0)
+    p1, p2 = _patch_clients(semgrep, mondays)
+    with p1, p2:
+        sync.run(state_path=state_file, set_triage_reviewing=True)
+
+    semgrep.triage_findings.assert_called_once()
+    call_args = semgrep.triage_findings.call_args
+    assert call_args[0][0] == ["s-2001"]
+    assert call_args[0][1] == "reviewing"
+    assert "m77" in call_args[0][2]
+    assert call_args[0][3] == "secrets"
+
+
+def test_triage_called_with_grouped_finding_ids(env_vars, state_file):
+    f1 = _sca_finding("g10", "CVE-001", severity="CRITICAL")
+    f2 = _sca_finding("g20", "CVE-002", severity="HIGH")
+
+    semgrep, mondays = _mock_clients(sca=[f1, f2])
+    mondays["SCA"].create_item.return_value = ("m-grp", 0)
+    p1, p2 = _patch_clients(semgrep, mondays)
+    with p1, p2:
+        sync.run(state_path=state_file, set_triage_reviewing=True)
+
+    semgrep.triage_findings.assert_called_once()
+    call_args = semgrep.triage_findings.call_args
+    assert sorted(call_args[0][0]) == ["g10", "g20"]
+    assert call_args[0][1] == "reviewing"
+    assert call_args[0][3] == "sca"
+
+
+def test_triage_failure_does_not_remove_from_state(env_vars, state_file):
+    from semgrep_client import SemgrepAPIError
+    semgrep, mondays = _mock_clients(sast=[SAST_FINDING])
+    semgrep.triage_findings.side_effect = SemgrepAPIError("triage failed")
+    p1, p2 = _patch_clients(semgrep, mondays)
+    with p1, p2:
+        sync.run(state_path=state_file, set_triage_reviewing=True)
+
+    state = json.loads(state_file.read_text())
+    assert state["monday_items_created"]["m-SAST"]["finding_ids"] == ["1001"]
+
+
+def test_monday_item_url_in_triage_note(env_vars, state_file):
+    semgrep, mondays = _mock_clients(sast=[SAST_FINDING])
+    mondays["SAST"].create_item.return_value = ("m-url-test", 0)
+    mondays["SAST"].board_id = 1001
+    p1, p2 = _patch_clients(semgrep, mondays)
+    with p1, p2:
+        sync.run(state_path=state_file, set_triage_reviewing=True)
+
+    note = semgrep.triage_findings.call_args[0][2]
+    assert "Created monday item:" in note
+    assert "acme-test.monday.com/boards/" in note
+    assert "m-url-test" in note

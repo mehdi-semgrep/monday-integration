@@ -75,8 +75,9 @@ This creates three boards (Semgrep SAST Findings, Semgrep SCA Findings, Semgrep 
 ### 6. Run the sync
 
 ```bash
-python sync.py              # sync all open findings
-python sync.py --limit 50   # sync up to 50 per type (for testing)
+python sync.py                            # sync all open findings
+python sync.py --limit 50                 # sync up to 50 per type (for testing)
+python sync.py --set-triage-reviewing     # also triage findings in Semgrep
 ```
 
 ## Configuration
@@ -89,6 +90,7 @@ python sync.py --limit 50   # sync up to 50 per type (for testing)
 | `MONDAY_BOARD_ID_SAST` | Board ID for SAST findings |
 | `MONDAY_BOARD_ID_SCA` | Board ID for SCA findings |
 | `MONDAY_BOARD_ID_SECRETS` | Board ID for Secrets findings |
+| `MONDAY_ACCOUNT_SLUG` | (Optional) monday.com subdomain — auto-discovered if not set |
 
 ## Usage
 
@@ -103,9 +105,23 @@ Grouped items get a richer Updates-feed post listing each member finding's detai
 
 Secrets findings are not grouped.
 
+### Triage-on-sync (opt-in)
+
+With the `--set-triage-reviewing` flag, the script triages each synced finding in Semgrep — setting its triage state to `"reviewing"` and adding a note with a link to the monday.com item (e.g. `Created monday item: https://acme.monday.com/boards/123/pulses/456`).
+
+```bash
+python sync.py --set-triage-reviewing
+```
+
+This provides server-side deduplication for SAST and SCA: filtering by `status: [open]` in `filters.yaml` ensures already-synced findings are excluded on subsequent runs. For Secrets, the triage is applied but the secrets endpoint does not yet support status filtering, so `state.json` handles dedup.
+
+The monday.com account slug (subdomain) is auto-discovered via the `account { slug }` GraphQL query. If this fails, set `MONDAY_ACCOUNT_SLUG` in `.env`.
+
+Without the flag, triage is skipped and dedup relies entirely on `state.json`.
+
 ### Idempotent syncs
 
-The script tracks synced findings in `state.json`. Running it multiple times is safe -- findings already synced are skipped. This makes it suitable for cron jobs or scheduled runs.
+The script tracks synced findings in `state.json` as a fallback. Running it multiple times is safe -- findings already synced are skipped. This makes it suitable for cron jobs or scheduled runs.
 
 ### The --limit flag
 
@@ -157,6 +173,7 @@ secrets:
 | `repo` | ✓ | ✓ | ✓ |
 | `rule` | ✓ | | |
 | `ai_verdict` | ✓ (true_positive, false_positive, not_analyzed¹) | | |
+| `status` | ✓ (open/fixed/muted) | ✓ | |
 | `reachability` | | ✓ | |
 | `transitivity` | | ✓ | |
 | `validation_state` | | | ✓ |
@@ -234,7 +251,7 @@ The script handles monday.com rate limiting automatically by respecting the `Ret
 | Pro | 10,000 |
 | Enterprise | 25,000 |
 
-**API calls per new finding:** each finding creates **two** monday.com calls (one `create_item`, one `create_update`). A full sync of 1,000 new findings costs roughly **2,003 API calls** (3 column-map queries + 1,000 × 2). Plan your tier and cron cadence accordingly — idempotent re-runs only spend calls on *new* findings.
+**API calls per new finding:** each finding creates **two** monday.com calls (one `create_item`, one `create_update`) plus **one** Semgrep API call (`triage`). A full sync of 1,000 new findings costs roughly **2,004 monday.com calls** (3 column-map queries + 1 account-slug query + 1,000 × 2) and **1,000 Semgrep triage calls**. Plan your tier and cron cadence accordingly — idempotent re-runs only spend calls on *new* findings.
 
 ### Semgrep API
 

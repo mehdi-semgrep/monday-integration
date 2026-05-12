@@ -31,6 +31,7 @@ class MondayClient:
             "API-Version": MONDAY_API_VERSION,
         }
         self._column_map: dict[str, str] | None = None
+        self._account_slug: str | None = None
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -70,6 +71,26 @@ class MondayClient:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def get_account_slug(self) -> str:
+        """Return the monday.com account slug (subdomain in URLs).
+
+        Cached after first call. Falls back to MONDAY_ACCOUNT_SLUG env var.
+        """
+        if self._account_slug is not None:
+            return self._account_slug
+        try:
+            data = self._post("query { account { slug } }")
+            slug = data.get("data", {}).get("account", {}).get("slug", "")
+            if slug:
+                self._account_slug = slug
+                return slug
+        except Exception:
+            pass
+        import os
+        slug = os.getenv("MONDAY_ACCOUNT_SLUG", "")
+        self._account_slug = slug
+        return slug
 
     def get_column_map(self) -> dict[str, str]:
         """Return {column_title: column_id} for the configured board.

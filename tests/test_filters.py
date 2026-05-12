@@ -308,3 +308,63 @@ def test_fetch_secrets_pagination_not_overridden(httpx_mock):
     req = httpx_mock.get_requests()[1]
     assert req.url.params["limit"] == "5"
     assert "cursor" not in req.url.params
+
+
+# ---------------------------------------------------------------------------
+# Status filter key
+# ---------------------------------------------------------------------------
+
+def test_load_filters_status_key_accepted(tmp_path):
+    path = _write_yaml(tmp_path, "sast:\n  status: [open]\n")
+    result = load_filters(path)
+    assert result["sast"]["status"] == ["open"]
+
+
+def test_to_query_params_status_sast():
+    filters = {"sast": {"status": ["open"]}}
+    params = to_query_params("sast", filters)
+    assert params["status"] == ["open"]
+
+
+def test_to_query_params_status_sca():
+    filters = {"sca": {"status": ["open", "fixed"]}}
+    params = to_query_params("sca", filters)
+    assert params["status"] == ["open", "fixed"]
+
+
+def test_status_not_allowed_for_secrets(tmp_path):
+    path = _write_yaml(tmp_path, "secrets:\n  status: [open]\n")
+    with pytest.raises(ValueError, match="Unknown filter key 'status'"):
+        load_filters(path)
+
+
+# ---------------------------------------------------------------------------
+# SemgrepClient.triage_findings
+# ---------------------------------------------------------------------------
+
+TRIAGE_URL = f"https://semgrep.dev/api/v1/deployments/{SLUG}/triage"
+
+
+def test_triage_findings_sends_correct_payload(httpx_mock):
+    httpx_mock.add_response(url=TRIAGE_URL, method="POST", json={})
+
+    client = SemgrepClient(token=TOKEN, deployment_slug=SLUG)
+    client.triage_findings(["100", "200"], "reviewing", "test note", "sast")
+
+    req = httpx_mock.get_requests()[0]
+    import json
+    body = json.loads(req.content)
+    assert body["issue_type"] == "sast"
+    assert body["issue_ids"] == [100, 200]
+    assert body["new_triage_state"] == "reviewing"
+    assert body["new_note"] == "test note"
+
+
+def test_triage_findings_auth_header(httpx_mock):
+    httpx_mock.add_response(url=TRIAGE_URL, method="POST", json={})
+
+    client = SemgrepClient(token=TOKEN, deployment_slug=SLUG)
+    client.triage_findings(["100"], "reviewing", "note", "sca")
+
+    req = httpx_mock.get_requests()[0]
+    assert req.headers["authorization"] == f"Bearer {TOKEN}"

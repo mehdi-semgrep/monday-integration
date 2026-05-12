@@ -5,8 +5,9 @@ Usage:
     cp .env.example .env               # fill in credentials + board IDs
     python sync.py                     # sync all findings
     python sync.py --limit 50          # sync up to 50 per type
-    python sync.py --filters my.yaml   # apply custom filters file
-    python sync.py --no-filters        # skip filtering even if filters.yaml exists
+    python sync.py --filters my.yaml              # apply custom filters file
+    python sync.py --no-filters                   # skip filtering even if filters.yaml exists
+    python sync.py --set-triage-reviewing         # triage synced findings to 'reviewing' in Semgrep
 
 State is persisted in state.json. Re-running is safe — findings already synced
 are skipped (deduplication by Semgrep finding ID).
@@ -193,6 +194,12 @@ def _semgrep_finding_url(slug: str, finding: Finding) -> str:
     if finding.finding_type == "Secrets":
         return f"{base}/secrets/{finding.id}"
     return f"{base}/findings/{finding.id}"
+
+
+def _monday_item_url(account_slug: str, board_id: int, item_id: str) -> str:
+    if not account_slug:
+        return ""
+    return f"https://{account_slug}.monday.com/boards/{board_id}/pulses/{item_id}"
 
 
 # ---------------------------------------------------------------------------
@@ -685,6 +692,7 @@ def run(
     limit: int | None = None,
     filters_path: Path | None = DEFAULT_FILTERS_FILE,
     types: set[str] | None = None,
+    set_triage_reviewing: bool = False,
 ) -> None:
     # types=None means all; validate against known board keys
     active_types = types if types is not None else set(BOARD_CONFIG)
@@ -713,9 +721,16 @@ def run(
         client = MondayClient(token=cfg["MONDAY_API_TOKEN"], board_id=board_id)
         boards[board_type] = {
             "client": client,
+            "board_id": board_id,
             "mapper": bc["mapper"],
             "body_formatter": bc["body_formatter"],
         }
+
+    # --- monday.com account slug (for triage note URLs) ---
+    account_slug = ""
+    if set_triage_reviewing and boards:
+        first_client = next(iter(boards.values()))["client"]
+        account_slug = first_client.get_account_slug()
 
     # --- Fetch findings ---
     print("Fetching Semgrep findings…")
@@ -800,6 +815,15 @@ def run(
                     board["client"].create_update(monday_id, body)
                 except Exception as exc:
                     print(f"  [{board_type}] Warning: update post failed for {monday_id}: {exc}")
+                if set_triage_reviewing:
+                    try:
+                        item_url = _monday_item_url(account_slug, board["board_id"], monday_id)
+                        note = f"Created monday item: {item_url}" if item_url else "Created monday item"
+                        semgrep.triage_findings(
+                            [f.id for f in group.members], "reviewing", note, board_type.lower(),
+                        )
+                    except Exception as exc:
+                        print(f"  [{board_type}] Warning: triage failed for {monday_id}: {exc}")
             except Exception as exc:
                 member_ids = ", ".join(f.id for f in group.members)
                 print(f"  [{board_type}] Failed for {member_ids}: {exc}")
@@ -833,6 +857,13 @@ def run(
                     board["client"].create_update(monday_id, body)
                 except Exception as exc:
                     print(f"  [Secrets] Warning: update post failed for {monday_id}: {exc}")
+                if set_triage_reviewing:
+                    try:
+                        item_url = _monday_item_url(account_slug, board["board_id"], monday_id)
+                        note = f"Created monday item: {item_url}" if item_url else "Created monday item"
+                        semgrep.triage_findings([finding.id], "reviewing", note, "secrets")
+                    except Exception as exc:
+                        print(f"  [Secrets] Warning: triage failed for {monday_id}: {exc}")
             except Exception as exc:
                 print(f"  [Secrets] Failed for {finding.id}: {exc}")
 
@@ -848,6 +879,8 @@ if __name__ == "__main__":
     parser.add_argument("--no-filters", action="store_true", help="Bypass filtering even if filters.yaml exists")
     parser.add_argument("--type", default=None, metavar="TYPES",
                         help="Comma-separated list of types to sync: sast,sca,secrets (default: all)")
+    parser.add_argument("--set-triage-reviewing", action="store_true",
+                        help="Triage synced findings to 'reviewing' in Semgrep with a note linking to the monday item")
     args = parser.parse_args()
 
     if args.type:
@@ -867,4 +900,5 @@ if __name__ == "__main__":
         env_path = os.getenv("SEMGREP_FILTERS_FILE")
         resolved_filters_path = Path(env_path) if env_path else DEFAULT_FILTERS_FILE
 
-    run(limit=args.limit, filters_path=resolved_filters_path, types=resolved_types)
+    run(limit=args.limit, filters_path=resolved_filters_path, types=resolved_types,
+        set_triage_reviewing=args.set_triage_reviewing)

@@ -24,13 +24,15 @@ The numeric deployment ID (required for the `/secrets` endpoint) is auto-discove
 3. Groups new SAST and SCA findings to reduce board noise (see **Finding grouping** below). Secrets are not grouped.
 4. For each group (or individual Secrets finding), creates a monday.com item on the appropriate board with all available metadata and a deep-link to the finding in the Semgrep Cloud UI.
 5. Immediately after each successful item creation, posts a rich HTML update to the item's Updates feed. Grouped items list each member finding's details and Semgrep URL.
-6. Saves updated state. All member finding IDs in a group are recorded, pointing to the same monday.com item ID.
+6. If `--set-triage-reviewing` is passed: triages the finding(s) in Semgrep — sets triage state to `"reviewing"` and adds a note with the monday.com item URL (e.g. `Created monday item: https://acme.monday.com/boards/123/pulses/456`). Triage failure is non-fatal. Skipped by default.
+7. Saves updated state. All member finding IDs in a group are recorded, pointing to the same monday.com item ID.
 
 ## Error handling
 
 - **Semgrep API errors** (auth failure, network) -- script exits with code 1.
 - **monday.com item creation failure** (per finding) -- logged, finding is NOT added to state, will be retried on next run.
 - **monday.com update-post failure** (per finding) -- logged as a warning, finding IS written to state (the item exists on the board without the rich update body). Re-running does not re-attempt the missing update.
+- **Semgrep triage failure** (per finding) -- logged as a warning, finding IS written to state. The monday.com item exists; the Semgrep finding just won't be marked as "reviewing".
 - **monday.com rate limiting (429)** -- automatically retries up to 3 times, respecting the `Retry-After` header.
 - **Transient transport errors** (`httpx.ReadError`, `ConnectError`, timeouts) -- caught at both call sites so a single blip does not crash a full sync.
 
@@ -46,9 +48,9 @@ All member finding IDs are tracked in `state.json` — re-runs skip the entire g
 
 ## API budget
 
-Each group (or individual Secrets finding) consumes **2** monday.com API calls: one `create_item` plus one `create_update`. Plus one `get_column_map` query per board per run (cached after first use).
+Each group (or individual Secrets finding) consumes **2** monday.com API calls (one `create_item` plus one `create_update`) and **1** Semgrep API call (`triage`). Plus one `get_column_map` query per board per run (cached after first use) and one `get_account_slug` query per run.
 
-Grouping reduces API spend — e.g. 10 SCA findings across 3 packages becomes 3 items (6 calls) instead of 10 items (20 calls). Idempotent re-runs only spend calls on findings that haven't been synced before.
+Grouping reduces API spend — e.g. 10 SCA findings across 3 packages becomes 3 items (6 monday calls + 3 triage calls) instead of 10 items (20 monday calls + 10 triage calls). Idempotent re-runs only spend calls on findings that haven't been synced before.
 
 ## State file format (v2)
 
@@ -81,10 +83,11 @@ To force a full re-sync, delete `state.json` before running.
 ## CLI flags
 
 ```
-python sync.py                        # sync all findings
-python sync.py --limit 100            # cap at 100 findings per type
-python sync.py --filters my.yaml      # use a specific filters file
-python sync.py --no-filters           # bypass filtering even if filters.yaml exists
+python sync.py                              # sync all findings
+python sync.py --limit 100                  # cap at 100 findings per type
+python sync.py --filters my.yaml            # use a specific filters file
+python sync.py --no-filters                 # bypass filtering even if filters.yaml exists
+python sync.py --set-triage-reviewing       # triage synced findings to 'reviewing' in Semgrep
 ```
 
 ## Filtering
@@ -92,6 +95,8 @@ python sync.py --no-filters           # bypass filtering even if filters.yaml ex
 Set `SEMGREP_FILTERS_FILE` to a YAML path, or use `--filters PATH`. If `filters.yaml` exists in the repo root it is applied automatically. `--no-filters` disables all filtering for that run.
 
 Filters are pushed to the Semgrep API as query params (server-side). Exception: `ai_verdict: [not_analyzed]` (and any list that includes it) is applied client-side after fetching, since the Semgrep API has no equivalent param for findings where the AI verdict field is absent. Filters gate new fetches only — `state.json` is never modified based on filter config.
+
+The `status` filter key is supported for SAST and SCA (not yet for Secrets). `status: [open]` is already the hardcoded default; adding it to `filters.yaml` makes it explicit and allows overriding. Combined with triage-on-sync (which sets findings to "reviewing"), this provides server-side dedup for SAST/SCA.
 
 ## Lambda usage
 

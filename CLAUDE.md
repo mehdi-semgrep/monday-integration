@@ -6,9 +6,9 @@ Python integration that syncs Semgrep Cloud Platform findings (SAST, SCA, Secret
 
 ## Key files
 
-- `semgrep_client.py` -- Semgrep API client. Two pagination schemes: offset for `/findings` (SAST + SCA), cursor for `/secrets`. Both `fetch_findings` and `fetch_secrets` accept `extra_params` for filter pushdown.
-- `monday_client.py` -- monday.com GraphQL client. Handles `API-Version: 2025-04` header, Retry-After rate limiting, `column_values` as JSON variable, and the `create_update` mutation.
-- `sync.py` -- Orchestrator. Three type-specific column mappers and three type-specific update-body formatters extract fields from `Finding.raw` dict. Routes findings to the correct board, creates the item, then posts the Updates-feed body. Loads filters and passes them as `extra_params` to each fetch call.
+- `semgrep_client.py` -- Semgrep API client. Two pagination schemes: offset for `/findings` (SAST + SCA), cursor for `/secrets`. Both `fetch_findings` and `fetch_secrets` accept `extra_params` for filter pushdown. `triage_findings()` POSTs to `/deployments/{slug}/triage` to set triage state and note on findings after they're synced to monday.com.
+- `monday_client.py` -- monday.com GraphQL client. Handles `API-Version: 2025-04` header, Retry-After rate limiting, `column_values` as JSON variable, and the `create_update` mutation. `get_account_slug()` queries `account { slug }` for building monday.com item URLs (falls back to `MONDAY_ACCOUNT_SLUG` env var).
+- `sync.py` -- Orchestrator. Three type-specific column mappers and three type-specific update-body formatters extract fields from `Finding.raw` dict. Routes findings to the correct board, creates the item, posts the Updates-feed body. With `--set-triage-reviewing`, also triages the finding in Semgrep (state="reviewing" + note with monday item URL). Loads filters and passes them as `extra_params` to each fetch call.
 - `filters.py` -- Config-file-driven filter layer. `load_filters(path)` parses a YAML file and validates keys against `ALLOWED_FILTERS`. `to_query_params(board_type, filters)` converts a filter block to Semgrep API query params. `filter_findings(findings, board_type, filters)` applies any client-side post-filters (currently: `ai_verdict` when `not_analyzed` is included, since the Semgrep API has no equivalent param).
 - `setup_boards.py` -- Creates the three monday.com boards with all columns. `BOARD_COLUMNS` dict defines column layouts (includes the "Semgrep URL" column).
 - `lambda_handler.py` -- AWS Lambda template. Reads secrets from Secrets Manager, calls `sync.run()`.
@@ -27,7 +27,8 @@ Python integration that syncs Semgrep Cloud Platform findings (SAST, SCA, Secret
 
 - `create_item` failures: logged, finding is NOT written to state → retried next run.
 - `create_update` failures (including transient `httpx.ReadError`, `ConnectError`, timeouts): logged as a warning, finding IS persisted to state. The item exists on the board without a rich update body; re-running does not re-attempt.
-- Both call sites use `except Exception` so transport-level blips don't crash the whole sync mid-batch.
+- `triage_findings` failures: logged as a warning, finding IS persisted to state. The monday.com item exists; the Semgrep finding just won't be marked as "reviewing". Non-fatal.
+- All three call sites use `except Exception` so transport-level blips don't crash the whole sync mid-batch.
 
 ## Important constraints
 
@@ -35,7 +36,7 @@ Python integration that syncs Semgrep Cloud Platform findings (SAST, SCA, Secret
 - Semgrep `/secrets` endpoint uses a **numeric deployment ID**, not the org slug. The `/findings` endpoint uses the slug.
 - `column_values` must be passed as a GraphQL **variable** (not inlined), serialized with `json.dumps()`.
 - `load_dotenv(override=True)` is used because the Semgrep MCP plugin may set `SEMGREP_APP_TOKEN` in the shell environment.
-- Each new finding costs **two** monday.com API calls (create_item + create_update). See README for daily-limit math.
+- Each new finding costs **two** monday.com API calls (create_item + create_update). With `--set-triage-reviewing`, adds **one** Semgrep API call (triage) per item. See README for daily-limit math.
 
 ## Running tests
 

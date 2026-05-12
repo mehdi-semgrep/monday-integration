@@ -19,6 +19,7 @@
 #     repo            — [org/repo1, org/repo2]          (repeatable — any match)
 #     rule            — [rule.id.one, rule.id.two]      (repeatable — any match)
 #     ai_verdict      — [true_positive | false_positive] (single value only — scalar param)
+#     status          — [open, fixed, muted]            (repeatable — overrides hardcoded open default)
 #
 #   sca:
 #     severity        — [low, medium, high, critical]  (repeatable — any match)
@@ -26,6 +27,7 @@
 #     repo            — [org/repo1, org/repo2]          (repeatable — any match)
 #     reachability    — [reachable, always_reachable, conditionally_reachable, unreachable, unknown]
 #     transitivity    — [direct, transitive, unknown]
+#     status          — [open, fixed, muted]            (repeatable — overrides hardcoded open default)
 #
 #   secrets:
 #     severity         — [SEVERITY_HIGH, SEVERITY_CRITICAL, SEVERITY_MEDIUM, SEVERITY_LOW]
@@ -33,6 +35,15 @@
 #     repo             — [org/repo1, org/repo2]
 #     validation_state — [VALIDATION_STATE_CONFIRMED_VALID, VALIDATION_STATE_CONFIRMED_INVALID,
 #                         VALIDATION_STATE_NO_VALIDATOR, VALIDATION_STATE_VALIDATION_ERROR]
+
+# --- Recommended: only open findings (default; pairs with triage-on-sync) ---
+# The sync script triages each finding to "reviewing" in Semgrep after creating
+# the monday item. Filtering by status: [open] is already the default. Adding it
+# to the filters file makes it explicit and allows overriding if needed.
+# sast:
+#   status: [open]
+# sca:
+#   status: [open]
 
 # --- Worked example 1: high+critical SAST that AI flagged as true positive ---
 # sast:

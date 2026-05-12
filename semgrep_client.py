@@ -52,6 +52,17 @@ class SemgrepClient:
             )
         return response.json()
 
+    def _post(self, url: str, body: dict) -> dict:
+        response = httpx.post(
+            url, headers={**self._headers, "Content-Type": "application/json"},
+            json=body, timeout=30,
+        )
+        if response.status_code != 200:
+            raise SemgrepAPIError(
+                f"HTTP {response.status_code} from {url}: {response.text[:300]}"
+            )
+        return response.json()
+
     def _fetch_deployment_id(self) -> str:
         """Discover the numeric deployment ID for the configured slug."""
         url = f"{SEMGREP_BASE}/deployments"
@@ -187,3 +198,30 @@ class SemgrepClient:
                 break
 
         return results[:max_findings]
+
+    def triage_findings(
+        self,
+        finding_ids: list[str],
+        triage_state: str,
+        note: str,
+        issue_type: str,
+    ) -> None:
+        """Triage one or more findings in Semgrep (set state + note).
+
+        Args:
+            finding_ids: Semgrep finding IDs (strings — cast to int for the API).
+            triage_state: New triage state (e.g. ``"reviewing"``).
+            note: Note text (e.g. ``"Created monday item: https://..."``).
+            issue_type: ``"sast"``, ``"sca"``, or ``"secrets"``.
+        """
+        url = f"{SEMGREP_BASE}/deployments/{self._slug}/triage"
+        batch_size = 3000
+        for i in range(0, len(finding_ids), batch_size):
+            batch = finding_ids[i : i + batch_size]
+            body = {
+                "issue_type": issue_type,
+                "issue_ids": [int(fid) for fid in batch],
+                "new_triage_state": triage_state,
+                "new_note": note,
+            }
+            self._post(url, body)
