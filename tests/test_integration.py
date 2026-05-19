@@ -239,13 +239,15 @@ def test_secrets_cursor_exhausted(httpx_mock, env_vars, state_file):
     _add_semgrep_pages(httpx_mock, "sca", [])
 
     httpx_mock.add_response(url=SEMGREP_DEPLOYMENTS_URL, json=DEPLOYMENTS_RESP)
+    secret_302 = _secret_finding("302")
+    secret_302["line"] = 5
     httpx_mock.add_response(
         url=SEMGREP_SECRETS_V2_URL, method="POST",
         json={"issues": [{"issue": _secret_finding("301"), "reviewCount": 0, "allRefs": []}], "cursor": "abc"},
     )
     httpx_mock.add_response(
         url=SEMGREP_SECRETS_V2_URL, method="POST",
-        json={"issues": [{"issue": _secret_finding("302"), "reviewCount": 0, "allRefs": []}], "cursor": ""},
+        json={"issues": [{"issue": secret_302, "reviewCount": 0, "allRefs": []}], "cursor": ""},
     )
 
     _add_monday_responses(httpx_mock, n_secrets=2)

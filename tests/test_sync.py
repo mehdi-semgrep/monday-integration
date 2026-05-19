@@ -507,6 +507,60 @@ def test_grouped_findings_all_tracked_in_state(env_vars, state_file):
 
 
 # ---------------------------------------------------------------------------
+# Secrets grouping
+# ---------------------------------------------------------------------------
+
+def _secrets_finding(fid, rule="secrets.generic.api-key", severity="SEVERITY_CRITICAL",
+                     repo="my-repo", file=".env", line=1,
+                     validation_state="VALIDATION_STATE_CONFIRMED_VALID",
+                     secret_type="API Key"):
+    return Finding(
+        id=fid, rule_name=rule, severity=severity,
+        file_path=file, line=line, repo=repo, finding_type="Secrets",
+        raw={
+            "confidence": "CONFIDENCE_HIGH",
+            "triageState": "FINDING_TRIAGE_STATE_UNTRIAGED",
+            "lineOfCodeUrl": f"https://github.com/org/{repo}/blob/abc/{file}#L{line}",
+            "message": f"Secret found in {file}",
+            "ruleCweNames": ["CWE-798"],
+            "ruleOwaspNames": ["A02:2021"],
+            "secretsAttributes": {"validationState": validation_state, "secretType": secret_type},
+        },
+    )
+
+
+def test_secrets_grouping_same_repo_file_line():
+    f1 = _secrets_finding("1", rule="secrets.generic.api-key")
+    f2 = _secrets_finding("2", rule="secrets.generic.password")
+    f3 = _secrets_finding("3", rule="secrets.generic.token", line=5)
+
+    groups = sync.group_findings([f1, f2, f3], "Secrets")
+    assert len(groups) == 2
+
+    line1_group = next(g for g in groups if g.representative.line == 1)
+    assert len(line1_group.members) == 2
+
+
+def test_secrets_group_update_body_contains_all_rules():
+    f1 = _secrets_finding("1", rule="secrets.generic.api-key", severity="SEVERITY_CRITICAL")
+    f2 = _secrets_finding("2", rule="secrets.generic.password", severity="SEVERITY_HIGH")
+    group = sync.FindingGroup(representative=f1, members=[f1, f2])
+    body = sync.format_update_body_secrets_group(group, "acme")
+    assert "api-key" in body
+    assert "password" in body
+    assert "2 secrets" in body
+    assert "semgrep.dev/orgs/acme/secrets/1" in body
+    assert "semgrep.dev/orgs/acme/secrets/2" in body
+
+
+def test_secrets_representative_prefers_confirmed_valid():
+    f1 = _secrets_finding("1", severity="SEVERITY_HIGH", validation_state="VALIDATION_STATE_NO_VALIDATOR")
+    f2 = _secrets_finding("2", severity="SEVERITY_HIGH", validation_state="VALIDATION_STATE_CONFIRMED_VALID")
+    groups = sync.group_findings([f1, f2], "Secrets")
+    assert groups[0].representative.id == "2"
+
+
+# ---------------------------------------------------------------------------
 # Triage-on-sync
 # ---------------------------------------------------------------------------
 
